@@ -12,7 +12,7 @@ models = llada_instruct_8b_models
 summarizer = dict(
     summary_groups=sum([v for k, v in locals().items() if k.endswith('_summary_groups')], []),
 )
-eval_cfg = {'gen_blocksize': 256, 'gen_length': 256, 'gen_steps': 256, 'batch_size':2, 'batch_size_':2}
+eval_cfg = {'gen_blocksize': 256, 'gen_length': 256, 'gen_steps': 256, 'batch_size':1, 'batch_size_':1}
 for model in models:
     model.update(eval_cfg)
 from opencompass.partitioners import NumWorkerPartitioner
