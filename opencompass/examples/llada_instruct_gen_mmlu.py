@@ -1,6 +1,4 @@
 from mmengine.config import read_base
-# /home/xushaoxuan/d-llm/opencompass/opencompass/configs/datasets/mmlu/mmlu_gen_a484b3.py
-# answer = 3, block = 3, fewshot = 5
 with read_base():
     from opencompass.configs.datasets.mmlu.mmlu_gen_a484b3 import \
         mmlu_datasets
@@ -22,9 +20,9 @@ from opencompass.tasks import OpenICLInferTask
 infer = dict(
     partitioner=dict(
         type=NumWorkerPartitioner,
-        num_worker=6,    # 划分完成后的任务数 / 预期能有的 worker 数
-        num_split=None,   # 每个数据集将被划分成多少份。若为 None，则使用 num_worker。
-        min_task_size=16, # 每个划分的最小数据条目数
+        num_worker=8,   
+        num_split=None,   
+        min_task_size=16, 
     ),
     runner=dict(
         type=LocalRunner,
@@ -33,4 +31,3 @@ infer = dict(
         retry=5
     ),
 )
-# python run.py examples/llada_gen_bbh.py -w outputs/demo
