@@ -169,5 +169,5 @@ def GPQA_Simple_Eval_postprocess_(text: str) -> str:
     if match:
         print(match.group(1).strip())
         return match.group(1).strip()
-    print(match.group(1).strip())
+    # print(match.group(1).strip())
     return " "
