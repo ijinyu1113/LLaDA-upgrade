@@ -25,7 +25,7 @@ cd human-eval && pip install -e .
 ```
 
 ### Custom Model Path
-If you want to use a custom model path, edit `opencompass/opencompass/configs/models/dllm/llada_instruct_8b.py` and modify the path argument:
+If you want to use a custom model path, edit the model file under `opencompass/opencompass/configs/models/dllm/` and modify the path argument. for example:
 ```python
 models = [
     dict(

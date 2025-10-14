@@ -21,7 +21,7 @@ from opencompass.tasks import OpenICLInferTask
 infer = dict(
     partitioner=dict(
         type=NumWorkerPartitioner,
-        num_worker=6,   
+        num_worker=8,   
         num_split=None,   
         min_task_size=16, 
     ),
