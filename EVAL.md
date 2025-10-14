@@ -32,12 +32,12 @@ For LLaDA-Instruct, we provide a comparison of nine generation metrics evaluated
 | HumanEval | 47.6     | 48.78                              |
 | MBPP      | 34.2     | 37.6                               |
 
-For LLaDA-Base, we use response length 256 and generation step 256 as the experiment setting.
+For LLaDA-Base, we set the number of generation steps to 256 and capped the response length at 256 tokens.
 | Benchmark | Internal toolkit | `Opencompass` |
 |-----------|-------------|-------------------------------------|
 | GSM8K     | 70.7     | 72.78                              |
-| math      | 27.3     |                               |
-| bbh      | 49.8     |                              |
+| math      | 27.3     | 30.02                              |
+| bbh      | 49.8     |  47.51                          |
 | HumanEval | 33.5     | 32.92                              |
 | MBPP      | 38.2     | 39.6                              |
 
@@ -58,6 +58,12 @@ For LLaDA-1.5, we follow the experimental setup detailed in [LLaDA-1.5](https://
 | HumanEval | 51.2     | 51.22                             |
 | MBPP      | 42.8    | 42.6                               |
 
+We were unable to reproduce the same results reported in the paper due to the following key factors:
+1. *Prompt Discrepancies*: The internal toolkit utilizes different prompts, which led to variations in the results.
+2. *Divergent Evaluation Settings*: The use of internal dataset code resulted in a different evaluation setup. For example, our version of the GPQA dataset differs from that used in the open-source OpenCompass framework.
+3. *Hardware-related Precision Errors*: Computational precision differences between H100 and A100 series GPUs introduced a result variance of over 2%.
+
+However, **by using opencompass, we can also get the similar result in our paper**. We will produce all benchmark results soon.
 
 ## Challenges encountered when reproducing the Instruct model with `lm-eval`
 To ensure that we was using `lm-eval` correctly, we first tested it on **LLaMA3-8B-Instruct**. The results are as follows:

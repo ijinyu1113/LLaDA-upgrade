@@ -24,6 +24,11 @@ git clone https://github.com/open-compass/human-eval.git
 cd human-eval && pip install -e .
 ```
 
+### MATH Setup
+For Math evaluation, pip install the additional dependency:
+```bash
+pip install math_verify latex2sympy2_extended
+```
 ### Custom Model Path
 If you want to use a custom model path, edit the model file under `opencompass/opencompass/configs/models/dllm/` and modify the path argument. for example:
 ```python

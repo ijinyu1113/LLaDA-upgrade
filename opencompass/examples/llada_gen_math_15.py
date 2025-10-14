@@ -1,6 +1,6 @@
 from mmengine.config import read_base
 with read_base():
-    from opencompass.configs.datasets.math.math_gen import \
+    from opencompass.configs.datasets.math.math_0shot_gen_11c4b5 import \
         math_datasets
     from opencompass.configs.models.dllm.llada_instruct_8b import \
         models as llada_instruct_8b_models
