@@ -4,7 +4,7 @@ models = [
     dict(
         type=LLaDAModel,
         abbr='llada-8b-instruct',
-        path='/path/to/LLaDA',
+        path='GSAI-ML/LLaDA-8B-Instruct',
         max_out_len=1024,
         batch_size=1,
         run_cfg=dict(num_gpus=1),

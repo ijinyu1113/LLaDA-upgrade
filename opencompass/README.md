@@ -8,11 +8,10 @@ To install the toolkit, follow the instructions from [open-compass/opencompass](
 ```bash
 conda create --name llada_eval python=3.10 -y
 conda activate llada_eval
-pip install mmengine
 pip install -e .
 ```
 
-We also provide scripts to evaluate [GSAI-ML/LLaDA-8B-Instruct](https://hf-mirror.com/GSAI-ML/LLaDA-8B-Instruct/tree/main) and [meta-llama/Meta-Llama-3-8B-Instruct](https://hf-mirror.com/meta-llama/Meta-Llama-3-8B-Instruct):
+We also provide scripts to evaluate [GSAI-ML/LLaDA-8B-Instruct](https://hf-mirror.com/GSAI-ML/LLaDA-8B-Instruct/tree/main) , [GSAI-ML/LLaDA-1.5](https://hf-mirror.com/GSAI-ML/LLaDA-1.5/tree/main) and [meta-llama/Meta-Llama-3-8B-Instruct](https://hf-mirror.com/meta-llama/Meta-Llama-3-8B-Instruct):
 ```
 bash eval_llada_instruct.sh
 bash eval_llama_instruct.sh
