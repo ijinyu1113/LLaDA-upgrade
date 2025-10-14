@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import transformers
 
-from opencompass.models.base import BaseModel
+from opencompass.models.base import BaseModel, LMTemplateParser
 from opencompass.models.base_api import APITemplateParser
 from opencompass.registry import MODELS
 from opencompass.utils.logging import get_logger
@@ -13,8 +13,18 @@ from opencompass.utils.prompt import PromptList
 import torch.nn.functional as F
 import numpy as np
 PromptType = Union[PromptList, str]
-# @MODELS.register_module()
-# class LLaDAModel(BaseModel):
+def _get_meta_template(meta_template):
+    default_meta_template = dict(
+        round=[
+            dict(role='HUMAN', api_role='HUMAN'),
+            # XXX: all system roles are mapped to human in purpose
+            # dict(role='SYSTEM', api_role='HUMAN'),
+            dict(role='BOT', api_role='BOT', generate=True),
+        ],
+        reserved_roles=[dict(role='SYSTEM', api_role='SYSTEM')]
+    )
+    return APITemplateParser(meta_template or default_meta_template)
+
 def add_gumbel_noise(logits, temperature):
     '''
     The Gumbel max is a method for sampling categorical distributions.
@@ -48,127 +58,7 @@ def get_num_transfer_tokens(mask_index, steps):
         num_transfer_tokens[i, :remainder[i]] += 1
 
     return num_transfer_tokens
-#     def __init__(self,
-#                  pkg_root: str,
-#                  ckpt_path: str,
-#                  tokenizer_only: bool = False,
-#                  meta_template: Optional[Dict] = None,
-#                  **kwargs):
-#         super().__init__(pkg_root, ckpt_path, tokenizer_only, meta_template, **kwargs)
 
-#     def add_gumbel_noise(logits, temperature):
-#         '''
-#         The Gumbel max is a method for sampling categorical distributions.
-#         According to arXiv:2409.02908, for MDM, low-precision Gumbel Max improves perplexity score but reduces generation quality.
-#         Thus, we use float64.
-#         '''
-#         if temperature == 0:
-#             return logits
-#         logits = logits.to(torch.float64)
-#         noise = torch.rand_like(logits, dtype=torch.float64)
-#         gumbel_noise = (- torch.log(noise)) ** temperature
-#         return logits.exp() / gumbel_noise
-
-
-#     def get_num_transfer_tokens(mask_index, steps):
-#         '''
-#         In the reverse process, the interval [0, 1] is uniformly discretized into steps intervals.
-#         Furthermore, because LLaDA employs a linear noise schedule (as defined in Eq. (8)),
-#         the expected number of tokens transitioned at each step should be consistent.
-
-#         This function is designed to precompute the number of tokens that need to be transitioned at each step.
-#         '''
-#         mask_num = mask_index.sum(dim=1, keepdim=True)
-
-#         base = mask_num // steps
-#         remainder = mask_num % steps
-
-#         num_transfer_tokens = torch.zeros(mask_num.size(0), steps, device=mask_index.device, dtype=torch.int64) + base
-
-#         for i in range(mask_num.size(0)):
-#             num_transfer_tokens[i, :remainder[i]] += 1
-
-#         return num_transfer_tokens
-
-
-#     @ torch.no_grad()
-#     def _generate(self, prompt, steps=1024, gen_length=1024, block_length=1024, temperature=0.,
-#                 cfg_scale=0., remasking='low_confidence', mask_id=126336):
-#         '''
-#         Args:
-#             model: Mask predictor.
-#             prompt: A tensor of shape (1, L).
-#             steps: Sampling steps, less than or equal to gen_length.
-#             gen_length: Generated answer length.
-#             block_length: Block length, less than or equal to gen_length. If less than gen_length, it means using semi_autoregressive remasking.
-#             temperature: Categorical distribution sampling temperature.
-#             cfg_scale: Unsupervised classifier-free guidance scale.
-#             remasking: Remasking strategy. 'low_confidence' or 'random'.
-#             mask_id: The toke id of [MASK] is 126336.
-#         '''
-#         x = torch.full((1, prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(model.device)
-#         x[:, :prompt.shape[1]] = prompt.clone()
-
-#         prompt_index = (x != mask_id)
-
-#         assert gen_length % block_length == 0
-#         num_blocks = gen_length // block_length
-
-#         assert steps % num_blocks == 0
-#         steps = steps // num_blocks
-
-#         for num_block in range(num_blocks):
-#             block_mask_index = (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length:] == mask_id)
-#             num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps)
-#             for i in range(steps):
-#                 mask_index = (x == mask_id)
-#                 if cfg_scale > 0.:
-#                     un_x = x.clone()
-#                     un_x[prompt_index] = mask_id
-#                     x_ = torch.cat([x, un_x], dim=0)
-#                     logits = self.model(x_).logits
-#                     logits, un_logits = torch.chunk(logits, 2, dim=0)
-#                     logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
-#                 else:
-#                     logits = self.model(x).logits
-
-#                 logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
-#                 x0 = torch.argmax(logits_with_noise, dim=-1) # b, l
-
-#                 if remasking == 'low_confidence':
-#                     p = F.softmax(logits, dim=-1)
-#                     x0_p = torch.squeeze(
-#                         torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1) # b, l
-#                 elif remasking == 'random':
-#                     x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
-#                 else:
-#                     raise NotImplementedError(remasking)
-
-#                 x0_p[:, prompt.shape[1] + (num_block + 1) * block_length:] = -np.inf
-
-#                 x0 = torch.where(mask_index, x0, x)
-#                 confidence = torch.where(mask_index, x0_p, -np.inf)
-
-#                 transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
-#                 for j in range(confidence.shape[0]):
-#                     _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
-#                     transfer_index[j, select_index] = True
-#                 x[transfer_index] = x0[transfer_index]
-
-#         return x
-#     def get_token_len(self, prompt: str) -> int:
-#         """Get lengths of the tokenized strings."""
-#         return len(self.tokenizer.encode(prompt))
-
-#     def generate(self, inputs: List[str], max_out_len: int) -> List[str]:
-#         """Generate results given a list of inputs. """
-#         return self._generate(inputs, max_out_len)
-
-#     def get_ppl(self,
-#                 inputs: List[str],
-#                 mask_length: Optional[List[int]] = None) -> List[float]:
-#         """Get perplexity scores given a list of inputs."""
-#         pass
 
 @MODELS.register_module()
 class LLaDAModel(BaseModel):
@@ -245,6 +135,8 @@ class LLaDAModel(BaseModel):
                  gen_length = 512,
                  gen_blocksize = 512,
                  batch_size_ = 1,
+                 diff_confidence_eos_eot_inf = False,
+                 diff_logits_eos_inf = False,
                  ) -> None:
         super().__init__(path=path,
                          max_seq_len=max_seq_len,
@@ -282,6 +174,10 @@ class LLaDAModel(BaseModel):
         self.remasking = remasking
         self.padding_id = padding_id
         self.mask_id = mask_id
+        self.diff_confidence_eos_eot_inf = diff_confidence_eos_eot_inf
+        self.diff_logits_eos_inf = diff_logits_eos_inf
+
+        self.template_parser = _get_meta_template(meta_template)
 
     def _load_tokenizer(self, path: str, tokenizer_path: Optional[str],
                         tokenizer_kwargs: dict):
@@ -575,18 +471,16 @@ class LLaDAModel(BaseModel):
                     logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
                 else:
                     logits = self.model(x, attention_mask=attention_mask).logits
-                    max_logits = torch.argmax(logits, dim=-1)
-                    # print("max logit 0:", max_logits[0][mask_index[0]])
-                    # print("max logit 1:", max_logits[-1][mask_index[-1]])
-                    # print("logits shape:", logits.shape)
-                    # print(logits[-1])
-
+                if self.diff_logits_eos_inf:
+                    logits[:, :, 126081] = -torch.inf
                 if temperature > 0.:
                     logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
                     x0 = torch.argmax(logits_with_noise, dim=-1)
                 else:
                     x0 = torch.argmax(logits, dim=-1)
-
+                if self.diff_confidence_eos_eot_inf:
+                    logits[:, :, 126081] = -torch.inf
+                    logits[:,:,126348] = -torch.inf
                 if remasking == 'low_confidence':
                     p = F.softmax(logits, dim=-1)
                     x0_p = torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)).squeeze(-1)
@@ -658,6 +552,8 @@ class LLaDAModel(BaseModel):
         remasking = self.remasking
         mask_id = self.mask_id
         print('parameters:', steps, gen_length, block_length, temperature, cfg_scale, remasking, mask_id)
+        print('diff_logits_eos_inf:', self.diff_logits_eos_inf)
+        print('diff_confidence_eos_eot_inf:', self.diff_confidence_eos_eot_inf)
         messages = _convert_chat_messages(prompt)
         prompt = [self.tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False) for m in messages]
         print('final prompt:', prompt)
@@ -688,10 +584,14 @@ class LLaDAModel(BaseModel):
                     logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
                 else:
                     logits = self.model(x).logits
-
+                if self.diff_logits_eos_inf:
+                    logits[:, :, 126081] = -torch.inf
                 logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
                 x0 = torch.argmax(logits_with_noise, dim=-1) # b, l
 
+                if self.diff_confidence_eos_eot_inf:
+                    logits[:, :, 126081] = -torch.inf
+                    logits[:,:,126348] = -torch.inf
                 if remasking == 'low_confidence':
                     p = F.softmax(logits, dim=-1)
                     x0_p = torch.squeeze(
@@ -1022,3 +922,102 @@ def  _convert_base_messages(inputs):
                 messages.append(item['prompt'])
             outputs.append(''.join(messages))
     return outputs
+
+class LLaDABaseModel(LLaDAModel):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.template_parser = LMTemplateParser()
+    def _generate(self, prompt,max_out_len = 1024,min_out_len =1024,stopping_criteria=[]):
+        '''
+        Args:
+            model: Mask predictor.
+            prompt: A tensor of shape (1, L).
+            steps: Sampling steps, less than or equal to gen_length.
+            gen_length: Generated answer length.
+            block_length: Block length, less than or equal to gen_length. If less than gen_length, it means using semi_autoregressive remasking.
+            temperature: Categorical distribution sampling temperature.
+            cfg_scale: Unsupervised classifier-free guidance scale.
+            remasking: Remasking strategy. 'low_confidence' or 'random'.
+            mask_id: The toke id of [MASK] is 126336.
+        '''
+        print('--------------------')
+        steps = self.gen_steps
+        gen_length = self.gen_length
+        block_length = self.gen_blocksize
+        cfg_scale = self.cfg
+        temperature = self.temperature
+        remasking = self.remasking
+        mask_id = self.mask_id
+        stopping_criteria = set(stopping_criteria+self.stop_words)
+        print('parameters:', steps, gen_length, block_length, temperature, cfg_scale, remasking, mask_id, stopping_criteria)
+
+        messages = _convert_base_messages(prompt)
+        print('final prompt:', messages)
+        prompt = self.tokenizer(messages)["input_ids"]
+        prompt = torch.tensor(prompt, dtype=torch.long, device=self.model.device)
+        # print(prompt.shape)
+        # print(prompt)
+        # print(type(prompt[0]))
+        x = torch.full((1, prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(self.model.device)
+        # print(prompt.shape)
+        x[:, :prompt.shape[1]] = prompt.clone()
+
+        prompt_index = (x != mask_id)
+
+        assert gen_length % block_length == 0
+        num_blocks = gen_length // block_length
+
+        assert steps % num_blocks == 0
+        steps = steps // num_blocks
+
+        for num_block in range(num_blocks):
+            block_mask_index = (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length:] == mask_id)
+            num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps)
+            for i in range(steps):
+                mask_index = (x == mask_id)
+                if cfg_scale > 0.:
+                    un_x = x.clone()
+                    un_x[prompt_index] = mask_id
+                    x_ = torch.cat([x, un_x], dim=0)
+                    logits = self.model(x_).logits
+                    logits, un_logits = torch.chunk(logits, 2, dim=0)
+                    logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+                else:
+                    logits = self.model(x).logits
+
+                logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
+                x0 = torch.argmax(logits_with_noise, dim=-1) # b, l
+
+                if remasking == 'low_confidence':
+                    p = F.softmax(logits, dim=-1)
+                    x0_p = torch.squeeze(
+                        torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1) # b, l
+                elif remasking == 'random':
+                    x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
+                else:
+                    raise NotImplementedError(remasking)
+
+                x0_p[:, prompt.shape[1] + (num_block + 1) * block_length:] = -np.inf
+
+                x0 = torch.where(mask_index, x0, x)
+                confidence = torch.where(mask_index, x0_p, -np.inf)
+                transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
+                for j in range(confidence.shape[0]):
+                    _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
+                    transfer_index[j, select_index] = True
+                x[transfer_index] = x0[transfer_index]
+        response = self.tokenizer.batch_decode(x[:, prompt.shape[1]:], skip_special_tokens=True)
+        response = response[0]
+        for stop_word in stopping_criteria:
+            if stop_word in response:
+                response = response.split(stop_word)[0]
+                break
+        response = [response]
+        print('--------------------')
+        print('response:', response)
+        print('--------------------')
+        return response
+    def get_token_len(self, prompt: str, add_special_tokens: bool=True) -> int:
+        m = _convert_base_messages([prompt])[0]
+        t = self.tokenizer(m, add_special_tokens=add_special_tokens)
+        return len(t['input_ids'])

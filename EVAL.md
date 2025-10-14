@@ -1,6 +1,6 @@
 # Eval
 
-## Usage
+## Usage for PPL evaluation
 Please refer to `eval_llada.sh` for the required dependencies and execution commands.
 
 For LLaDA-Base, we provide a comparison of the five conditional generation metrics evaluated using both the open-source `lm-eval` library and our internal evaluation toolkit.
@@ -16,19 +16,47 @@ In addition, we provide ablation studies on the above five metrics with respect 
 |gen_length=1024,steps=1024,block_length=1024|49.7|70.3|31.4|35.4|40.0|
 |gen_length=512,steps=512,block_length=512|50.4|70.8|30.9|32.9|39.2|
 |gen_length=256,steps=256,block_length=256|45.0|70.0|30.3|32.9|40.2|
+## Usage for Gen evaluation
+For gen evaluation, we use the open-source toolkit `opencompass` to reproduce our results. Please see [Opencompass](./opencompass/README.md) for more detials.
 
-For LLaDA-Instruct, we provide a comparison of nine generation metrics evaluated using both the open-source `opencompass` library and our internal evaluation toolkit. For the MBPP code generation benchmark, we employ a 3-shot prompting configuration.
+For LLaDA-Instruct, we provide a comparison of nine generation metrics evaluated using both the open-source `opencompass` library and our internal evaluation toolkit.
 | Benchmark | Internal toolkit | `Opencompass` |
 |-----------|-------------|-------------------------------------|
-| mmlu      | 65.5     | 64.89                              |
+| mmlu      | 65.5     | 65.36                              |
 | mmlu_pro  | 37       | 36.58                              |
 | Hellaswag | 74.6     | 75.32                              |
 | ARC-C     | 88.5     | 89.15                              |
-| GSM8K     | 78.6     | 79.60                              |
+| GSM8K     | 78.6     | 79.23                              |
 | math      | 26.6     | 26.34                              |
-| GPQA      | 31.8     | 32.32                              |
+| GPQA      | 31.8     | 30.30                             |
 | HumanEval | 47.6     | 48.78                              |
-| MBPP      | 34.2(4)     | 38.2(3)                               |
+| MBPP      | 34.2     | 37.6                               |
+
+For LLaDA-Base, we use response length 256 and generation step 256 as the experiment setting.
+| Benchmark | Internal toolkit | `Opencompass` |
+|-----------|-------------|-------------------------------------|
+| GSM8K     | 70.7     | 72.78                              |
+| math      | 27.3     |                               |
+| bbh      | 49.8     |                              |
+| HumanEval | 33.5     | 32.92                              |
+| MBPP      | 38.2     | 39.6                              |
+
+For LLaDA-1.5, we follow the experimental setup detailed in [LLaDA-1.5](https://arxiv.org/abs/2505.19223).
+| LLaDA-instruct | Internal toolkit | `Opencompass` |
+|-----------|-------------|-------------------------------------|
+| GSM8K     | 78.6     | 78.85                             |
+| math      | 42.2   | 43.2                              |
+| GPQA      | 33.3     | 32.32                              |
+| HumanEval | 49.4     | 46.95                             |
+| MBPP      | 41.0     | 39.6                               |
+
+| LLaDA-1.5 | Internal toolkit | `Opencompass` |
+|-----------|-------------|-------------------------------------|
+| GSM8K     | 82.8     | 83.62                              |
+| math      | 42.3     | 42.34                             |
+| GPQA      | 36.4     | 34.85                              |
+| HumanEval | 51.2     | 51.22                             |
+| MBPP      | 42.8    | 42.6                               |
 
 
 ## Challenges encountered when reproducing the Instruct model with `lm-eval`

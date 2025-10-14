@@ -52,4 +52,4 @@ from .yi_api import YiAPI  # noqa: F401
 from .zhipuai_api import ZhiPuAI  # noqa: F401
 from .zhipuai_v2_api import ZhiPuV2AI  # noqa: F401
 
-from .dllm import LLaDAModel # noqa: F401
+from .dllm import LLaDAModel, LLaDABaseModel # noqa: F401
