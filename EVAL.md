@@ -58,12 +58,12 @@ For LLaDA-1.5, we follow the experimental setup detailed in [LLaDA-1.5](https://
 | HumanEval | 51.2     | 51.22                             |
 | MBPP      | 42.8    | 42.6                               |
 
-We were unable to reproduce the same results reported in the paper due to the following key factors:
+We were unable to reproduce the **same** results reported in the paper due to the following key factors:
 1. *Prompt Discrepancies*: The internal toolkit utilizes different prompts, which led to variations in the results.
 2. *Divergent Evaluation Settings*: The use of internal dataset code resulted in a different evaluation setup. For example, our version of the GPQA dataset differs from that used in the open-source OpenCompass framework.
 3. *Hardware-related Precision Errors*: Computational precision differences between H100 and A100 series GPUs introduced a result variance of over 2%.
 
-However, **by using opencompass, we can also get the similar result in our paper**. We will produce all benchmark results soon.
+Nevertheless, we successfully replicated our paper's findings using the OpenCompass framework. The remaining benchmark evaluations will be completed and reported subsequently.
 
 ## Challenges encountered when reproducing the Instruct model with `lm-eval`
 To ensure that we was using `lm-eval` correctly, we first tested it on **LLaMA3-8B-Instruct**. The results are as follows:
