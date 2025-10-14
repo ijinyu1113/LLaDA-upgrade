@@ -4,20 +4,12 @@ from mmengine.config import read_base
 with read_base():
     from opencompass.configs.datasets.gsm8k.gsm8k_gen import \
         gsm8k_datasets
-    # from opencompass.configs.datasets.gsm8k.internal_gsm8k_gen_d2537e import \
-    #     gsm8k_datasets
+
     from opencompass.configs.models.hf_llama.hf_llama3_8b_instruct import \
         models as hf_llama3_8b_instruct_models
-    # from opencompass.configs.summarizers.groups.gsm8k import \
-    #     gsm8k_summary_groups
+
 datasets = gsm8k_datasets
 models = hf_llama3_8b_instruct_models
-# eval_cfg = {'gen_blocksize': 8, 'gen_length': 256, 'gen_steps': 256}
-# for model in models:
-    # model.update(eval_cfg)
-# summarizer = dict(
-#     summary_groups=sum([v for k, v in locals().items() if k.endswith('_summary_groups')], []),
-# )
 from opencompass.partitioners import NumWorkerPartitioner
 from opencompass.runners import LocalRunner
 from opencompass.tasks import OpenICLInferTask

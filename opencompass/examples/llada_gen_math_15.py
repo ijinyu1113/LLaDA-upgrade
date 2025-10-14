@@ -1,12 +1,17 @@
 from mmengine.config import read_base
 with read_base():
-    from opencompass.configs.datasets.gpqa.gpqa_fewshot_gen import \
-        gpqa_datasets
+    from opencompass.configs.datasets.math.math_gen import \
+        math_datasets
     from opencompass.configs.models.dllm.llada_instruct_8b import \
         models as llada_instruct_8b_models
-datasets = gpqa_datasets
+    from opencompass.configs.summarizers.groups.mathbench import \
+        mathbench_summary_groups
+datasets = math_datasets
 models = llada_instruct_8b_models
-eval_cfg = {'gen_blocksize': 64, 'gen_length': 128, 'gen_steps': 128, 'batch_size': 1, 'batch_size_':1}
+summarizer = dict(
+    summary_groups=sum([v for k, v in locals().items() if k.endswith('_summary_groups')], []),
+)
+eval_cfg = {'gen_blocksize': 64, 'gen_length': 512, 'gen_steps': 512, 'batch_size':1, 'batch_size_':1}
 for model in models:
     model.update(eval_cfg)
 from opencompass.partitioners import NumWorkerPartitioner
@@ -15,9 +20,9 @@ from opencompass.tasks import OpenICLInferTask
 infer = dict(
     partitioner=dict(
         type=NumWorkerPartitioner,
-        num_worker=8,  
-        num_split=None,  
-        min_task_size=16,
+        num_worker=7,    
+        num_split=None,   
+        min_task_size=16, 
     ),
     runner=dict(
         type=LocalRunner,
@@ -26,3 +31,4 @@ infer = dict(
         retry=5
     ),
 )
+
