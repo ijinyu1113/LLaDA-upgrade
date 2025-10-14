@@ -8,6 +8,7 @@ To install the toolkit, follow the instructions from [open-compass/opencompass](
 ```bash
 conda create --name llada_eval python=3.10 -y
 conda activate llada_eval
+pip install mmengine
 pip install -e .
 ```
 
