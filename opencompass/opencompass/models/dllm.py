@@ -809,35 +809,23 @@ class LLaDAModel(BaseModel):
             max_mask_len = batch.shape[1] - max(mask_length)
             prompt_index = torch.arange(batch.shape[1], device=batch.device) < max_mask_len
         else:
-            # mask_length = [batch.shape[1] - 1]
-            # max_mask_len = batch.shape[1] - 1
-
             max_mask_len = len(prefix['input_ids'][0])
             mask_length = [max_mask_len]
             prompt_index = torch.arange(batch.shape[1], device=batch.device) < max_mask_len
             # prompt_index = torch.zeros(batch.shape[1], dtype=torch.bool, device=batch.device)
         
-        # 3. 为每个样本单独计算困惑度
         single_seq = batch.repeat(self.batch_size, 1)
-        # 计算target部分长度（用于归一化）
         lens = single_seq.shape[1]
         target_len = (single_seq.shape[1] - mask_length[0])
-        # target_len = (batch.shape[1] - max_mask_len)
-        # print('----------------')
-        # print(target_len)
         
         loss_acc = []
         for _ in range(self.mc_num // self.batch_size):
-            # 使用扩散前向过程创建掩码版本
             perturbed_seq, p_mask = self._forward_process(single_seq, prompt_index)
             
-            # 找到被mask的位置
             mask_indices = perturbed_seq == self.mask_id
             
-            # 获取模型预测
             logits = self.get_logits(perturbed_seq, prompt_index)
             
-            # 计算掩码位置的交叉熵损失，应用重要性采样权重
             loss = F.cross_entropy(
                 logits[mask_indices], 
                 single_seq[mask_indices], 
@@ -845,9 +833,6 @@ class LLaDAModel(BaseModel):
             ) / p_mask[mask_indices]
             
             normalized_loss = loss.sum() / (self.batch_size * target_len)
-            # all lens
-            # normalized_loss = loss.sum() / (lens * self.batch_size)
-            # normalized_loss = normalized_loss / target_len
             loss_acc.append(normalized_loss.item())
         
         # 对所有蒙特卡洛样本取平均
@@ -949,6 +934,8 @@ class LLaDABaseModel(LLaDAModel):
         remasking = self.remasking
         mask_id = self.mask_id
         stopping_criteria = set(stopping_criteria+self.stop_words)
+        print('diff_logits_eos_inf:', self.diff_logits_eos_inf)
+        print('diff_confidence_eos_eot_inf:', self.diff_confidence_eos_eot_inf)
         print('parameters:', steps, gen_length, block_length, temperature, cfg_scale, remasking, mask_id, stopping_criteria)
 
         messages = _convert_base_messages(prompt)
@@ -1017,6 +1004,185 @@ class LLaDABaseModel(LLaDAModel):
         print('response:', response)
         print('--------------------')
         return response
+    
+    def batch_generate(self, prompt,stopping_criteria=[]):
+        '''
+        Args:
+            model: Mask predictor.
+            prompt: A tensor of shape (B, L), potentially left-padded.
+            steps: Sampling steps, less than or equal to gen_length.
+            gen_length: Generated answer length.
+            block_length: Block length, less than or equal to gen_length. If less than gen_length, it means using semi_autoregressive remasking.
+            temperature: Categorical distribution sampling temperature.
+            cfg_scale: Unsupervised classifier-free guidance scale.
+            remasking: Remasking strategy. 'low_confidence' or 'random'.
+            mask_id: The token id of [MASK].
+            padding_id: The token id for padding.
+        '''
+        steps = self.gen_steps
+        gen_length = self.gen_length
+        block_length = self.gen_blocksize
+        cfg_scale = self.cfg
+        temperature = self.temperature
+        remasking = self.remasking
+        mask_id = self.mask_id
+        padding_id = self.padding_id
+        stopping_criteria = set(stopping_criteria+self.stop_words)
+        print('--------------------')
+        print('diff_logits_eos_inf:', self.diff_logits_eos_inf)
+        print('diff_confidence_eos_eot_inf:', self.diff_confidence_eos_eot_inf)
+        print('parameters:', steps, gen_length, block_length, temperature, cfg_scale, remasking, mask_id)
+        messages = _convert_base_messages(prompt)
+        prompt = [self.tokenizer.apply_chat_template(m_i, add_generation_prompt=True, tokenize=False) for m_i in messages]
+        print('final prompt:', prompt)
+        prompt = self.tokenizer.batch_encode_plus(prompt, padding = True, return_tensors='pt')['input_ids']
+        # prompt = self.tokenizer(prompt,return_tensors='pt')['input_ids']
+        batch_size, prompt_len = prompt.shape
+        total_len = prompt_len + gen_length
+        
+        is_left = False
+        for i in range(batch_size):
+            if (prompt[i, 0] == padding_id) and (prompt[i, -1] != padding_id):
+                is_left = True
+                break
+        if not is_left:
+            batch_padding_position = []
+            for i in range(batch_size):
+                padding_pos = (prompt[i] == padding_id).nonzero(as_tuple=True)[0]
+                if len(padding_pos) > 0:
+                    batch_padding_position.append(padding_pos[0].item())
+                else:
+                    batch_padding_position.append(prompt_len)
+            
+            ## where padding start
+            prompt_len = batch_padding_position.copy()
+
+        x = torch.full((batch_size, total_len), mask_id, dtype=torch.long, device=self.model.device)
+        if not is_left:
+            for i in range(batch_size):
+                x[i, :prompt_len[i]] = prompt[i, :prompt_len[i]].clone()
+                x[i, prompt_len[i] + gen_length:] = torch.full((total_len - (prompt_len[i] + gen_length),), padding_id, dtype=torch.long) 
+        else:
+            x[:, :prompt_len] = prompt.clone()
+
+        original_prompt_mask = (prompt != padding_id)
+        prompt_index = torch.zeros_like(x, dtype=torch.bool)
+        if not is_left:
+            for i in range(batch_size):
+                prompt_index[i, :prompt_len[i]] = original_prompt_mask[i, :prompt_len[i]]
+        else:
+            prompt_index[:, :prompt_len] = original_prompt_mask
+
+        assert gen_length % block_length == 0
+        num_blocks = gen_length // block_length
+
+        assert steps % num_blocks == 0
+        steps_per_block = steps // num_blocks
+        
+        attention_mask = torch.ones((batch_size, total_len), device=x.device, dtype=torch.long)
+        
+        if not is_left:
+            for i in range(batch_size):
+                # attention_mask[i, :prompt_len[i]+gen_length] = original_prompt_mask[i, :prompt_len[i]+gen_length].long()
+                attention_mask[i, prompt_len[i] + gen_length:] = 0 
+        else:
+            attention_mask[:, :prompt_len] = original_prompt_mask.long()
+        for num_block in range(num_blocks):
+
+            if not is_left:
+                start_pos = [prompt_len[i] + num_block * block_length for i in range(batch_size)]
+                end_pos = [prompt_len[i] + (num_block + 1) * block_length for i in range(batch_size)]
+                block_mask_index = torch.zeros((batch_size, block_length), dtype=torch.bool, device=x.device)
+                for i in range(batch_size):
+                    block_mask_index[i] = (x[i, start_pos[i]:end_pos[i]] == mask_id)
+            else:
+                start_pos = prompt_len + num_block * block_length
+                end_pos = prompt_len + (num_block + 1) * block_length
+                block_mask_index = (x[:, start_pos:end_pos] == mask_id)
+            
+           
+            for i in range(steps_per_block):
+                mask_index = (x == mask_id)
+                if not mask_index.any():
+                    break
+                    
+                if cfg_scale > 0.:
+                    un_x = x.clone()
+                    un_x[prompt_index] = mask_id
+                    
+                    x_ = torch.cat([x, un_x], dim=0)
+                    extended_attention_mask = torch.cat([attention_mask, attention_mask], dim=0)
+                    
+                    logits = self.model(x_, attention_mask=extended_attention_mask).logits
+                    logits, un_logits = torch.chunk(logits, 2, dim=0)
+                    logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+                else:
+                    logits = self.model(x, attention_mask=attention_mask).logits
+                if self.diff_logits_eos_inf:
+                    logits[:, :, 126081] = -torch.inf
+                if temperature > 0.:
+                    logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
+                    x0 = torch.argmax(logits_with_noise, dim=-1)
+                else:
+                    x0 = torch.argmax(logits, dim=-1)
+                if self.diff_confidence_eos_eot_inf:
+                    logits[:, :, 126081] = -torch.inf
+                    logits[:,:,126348] = -torch.inf
+                if remasking == 'low_confidence':
+                    p = F.softmax(logits, dim=-1)
+                    x0_p = torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)).squeeze(-1)
+                elif remasking == 'random':
+                    x0_p = torch.rand_like(logits[:, :, 0])
+                else:
+                    raise NotImplementedError(remasking)
+
+                confidence_mask = torch.ones_like(x, dtype=torch.bool)
+                if not is_left:
+                    for j in range(batch_size):
+                        confidence_mask[j, end_pos[j]:] = False
+                else:
+                    confidence_mask[:, end_pos:] = False
+                
+                x0 = torch.where(mask_index, x0, x)
+                confidence = torch.where(mask_index & confidence_mask, x0_p, -torch.inf)
+
+            
+                num_masked_in_block = block_mask_index.sum(dim=-1)
+                num_to_reveal = torch.ceil(num_masked_in_block * (1.0 / steps_per_block)).long()
+
+                transfer_index = torch.zeros_like(x0, dtype=torch.bool)
+                for j in range(confidence.shape[0]):
+                    k = min(num_to_reveal[j].item(), (confidence[j] > -torch.inf).sum().item())
+                    if k > 0:
+                        _, select_index = torch.topk(confidence[j], k=k)
+                        transfer_index[j, select_index] = True
+                
+                x[transfer_index] = x0[transfer_index]
+                true_indices = torch.where(transfer_index[-1])[0].tolist()
+                
+        if not is_left:
+            for i in range(batch_size):
+                x_generated = x[i, prompt_len[i]:prompt_len[i] + gen_length].clone()
+                x[i,-gen_length:] = x_generated.clone()
+                x[i, : -gen_length] = prompt[i].clone()
+                # x[i, : prompt_len[i]] = prompt[i, :prompt_len[i]].clone()
+        # response = self.tokenizer.batch_decode(x[:, -gen_length:], skip_special_tokens=True)
+        responses = []
+        for i in range(batch_size):
+            response = self.tokenizer.decode(x[i, -gen_length:], skip_special_tokens=True)
+            for stop_word in stopping_criteria:
+                if stop_word in response:
+                    response = response.split(stop_word)[0]
+                    break
+            responses.append(response)
+            # responses.append(self.tokenizer.decode(x[i, -gen_length:], skip_special_tokens=True))
+        print('--------------------')
+        for i in range(batch_size):
+            print(f'Response {i}:', responses[i])
+            print('====================')
+        print('--------------------')
+        return responses
+    
     def get_token_len(self, prompt: str, add_special_tokens: bool=True) -> int:
         m = _convert_base_messages([prompt])[0]
         t = self.tokenizer(m, add_special_tokens=add_special_tokens)

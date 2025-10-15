@@ -41,7 +41,7 @@ For LLaDA-Base, we set the number of generation steps to 256 and capped the resp
 | HumanEval | 33.5     | 32.92                              |
 | MBPP      | 38.2     | 39.6                              |
 
-For LLaDA-1.5, we follow the experimental setup detailed in [LLaDA-1.5](https://arxiv.org/abs/2505.19223).
+For LLaDA-1.5, we follow the experimental setup detailed in [LLaDA-1.5](https://arxiv.org/abs/2505.19223). For IFEval Bench, we report the average of `Prompt-level-strict-accuracy` and `Inst-level-strict-accuracy`.
 | LLaDA-instruct | Internal toolkit | `Opencompass` |
 |-----------|-------------|-------------------------------------|
 | GSM8K     | 78.6     | 78.85                             |
@@ -49,6 +49,8 @@ For LLaDA-1.5, we follow the experimental setup detailed in [LLaDA-1.5](https://
 | GPQA      | 33.3     | 32.32                              |
 | HumanEval | 49.4     | 46.95                             |
 | MBPP      | 41.0     | 39.6                               |
+| IFEval      | 62.2     | 64.41                               |
+
 
 | LLaDA-1.5 | Internal toolkit | `Opencompass` |
 |-----------|-------------|-------------------------------------|
@@ -57,6 +59,8 @@ For LLaDA-1.5, we follow the experimental setup detailed in [LLaDA-1.5](https://
 | GPQA      | 36.4     | 34.85                              |
 | HumanEval | 51.2     | 51.22                             |
 | MBPP      | 42.8    | 42.6                               |
+| IFEval      | 66.2     | 65.24                               |
+
 
 We were unable to reproduce the **same** results reported in the paper due to the following key factors:
 1. *Prompt Discrepancies*: The internal toolkit utilizes different prompts, which led to variations in the results.

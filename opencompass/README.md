@@ -44,5 +44,9 @@ models = [
 ]
 
 ```
+
+### Batch Generate
+We also implement the `batch_generate` function. To use this fuction, please set `batch_size >1, batch_size_>1, batch_size = batch_size_`. You should also use the new [modeling_llada](../modeling_llada.py) instead of the default one.
+
 ## Acknowledgement
 This project is a fork of [open-compass/opencompass](https://github.com/open-compass/opencompass), an open-source large model evaluation platform. The original OpenCompass framework provides the foundation for our LLaDA-Instruct and LLaMA-Instruct model evaluations.
