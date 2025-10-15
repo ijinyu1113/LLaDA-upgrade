@@ -30,7 +30,7 @@ For Math evaluation, pip install the additional dependency:
 pip install math_verify latex2sympy2_extended
 ```
 ### Custom Model Path
-If you want to use a custom model path, edit the model file under `opencompass/opencompass/configs/models/dllm/` and modify the path argument. for example:
+If you want to use a custom model path, edit the model file under `opencompass/opencompass/configs/models/dllm/` and modify the path argument. For example:
 ```python
 models = [
     dict(

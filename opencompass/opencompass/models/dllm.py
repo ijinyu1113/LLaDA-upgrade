@@ -1033,9 +1033,9 @@ class LLaDABaseModel(LLaDAModel):
         print('diff_confidence_eos_eot_inf:', self.diff_confidence_eos_eot_inf)
         print('parameters:', steps, gen_length, block_length, temperature, cfg_scale, remasking, mask_id)
         messages = _convert_base_messages(prompt)
-        prompt = [self.tokenizer.apply_chat_template(m_i, add_generation_prompt=True, tokenize=False) for m_i in messages]
-        print('final prompt:', prompt)
-        prompt = self.tokenizer.batch_encode_plus(prompt, padding = True, return_tensors='pt')['input_ids']
+        # prompt = [self.tokenizer.apply_chat_template(m_i, add_generation_prompt=True, tokenize=False) for m_i in messages]
+        print('final prompt:', messages)
+        prompt = self.tokenizer.batch_encode_plus(messages, padding = True, return_tensors='pt')['input_ids']
         # prompt = self.tokenizer(prompt,return_tensors='pt')['input_ids']
         batch_size, prompt_len = prompt.shape
         total_len = prompt_len + gen_length
