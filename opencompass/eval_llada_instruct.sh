@@ -22,6 +22,7 @@ python run.py examples/llada_gen_math_15.py -w outputs/llada_instruct_math_15
 python run.py examples/llada_gen_gpqa_15.py -w outputs/llada_instruct_gpqa_15
 python run.py examples/llada_gen_humaneval_15.py -w outputs/llada_instruct_humaneval_15
 python run.py examples/llada_gen_mbpp_15.py -w outputs/llada_instruct_mbpp_15
+python run.py examples/llada_gen_ifeval_15.py -w outputs/llada_instruct_ifeval_15
 
 # llada 1.5 paper setting for llada 1.5 model
 python run.py examples/llada_15_gen_gsm8k.py -w outputs/llada_15_gsm8k
