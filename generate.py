@@ -1,5 +1,4 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import torch
 import numpy as np
 import torch.nn.functional as F
