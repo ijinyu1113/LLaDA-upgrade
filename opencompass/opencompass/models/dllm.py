@@ -10,6 +10,7 @@ from opencompass.models.base_api import APITemplateParser
 from opencompass.registry import MODELS
 from opencompass.utils.logging import get_logger
 from opencompass.utils.prompt import PromptList
+from LLaDA.generate import generate as LLaDA_generate
 import torch.nn.functional as F
 import numpy as np
 PromptType = Union[PromptList, str]
@@ -618,10 +619,26 @@ class LLaDAModel(BaseModel):
 
     def generate(self, inputs: List[str], max_out_len: int) -> List[str]:
         """Generate results given a list of inputs. """
-        batch_size = len(inputs)
-        if batch_size > 1:
-            return self.batch_generate(inputs)
-        return self._generate(inputs)
+        messages = _convert_chat_messages(inputs)
+        prompt = [self.tokenizer.apply_chat_template(m_i, add_generation_prompt=True, tokenize=False) for m_i in messages]
+        print('final prompt:', prompt)
+        prompt = self.tokenizer.batch_encode_plus(prompt, padding = True, return_tensors='pt')['input_ids']
+        responses = LLaDA_generate(
+            model = self.model,
+            prompt = prompt.to(self.model.device),
+            tokenizer = self.tokenizer,
+            steps = self.gen_steps,
+            gen_length = self.gen_length,
+            block_length = self.gen_blocksize,
+            temperature = self.temperature,
+            cfg_scale = self.cfg,
+            remasking = self.remasking,
+            mask_id = self.mask_id,
+            padding_id = self.padding_id,
+            diff_confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
+            diff_logits_eos_inf = self.diff_logits_eos_inf,
+        )
+        return responses
     
     def get_ppl(self,
                 inputs: List[str],
@@ -1182,8 +1199,40 @@ class LLaDABaseModel(LLaDAModel):
             print('====================')
         print('--------------------')
         return responses
+    def generate(self, inputs: List[str], max_out_len: int) -> List[str]:
+        """Generate results given a list of inputs. """
+        messages = _convert_chat_messages(inputs)
+        prompt = [self.tokenizer.apply_chat_template(m_i, add_generation_prompt=True, tokenize=False) for m_i in messages]
+        print('final prompt:', prompt)
+        prompt = self.tokenizer.batch_encode_plus(prompt, padding = True, return_tensors='pt')['input_ids']
+        responses = LLaDA_generate(
+            model = self.model,
+            prompt = prompt.to(self.model.device),
+            tokenizer = self.tokenizer,
+            steps = self.gen_steps,
+            gen_length = self.gen_length,
+            block_length = self.gen_blocksize,
+            temperature = self.temperature,
+            cfg_scale = self.cfg,
+            remasking = self.remasking,
+            mask_id = self.mask_id,
+            padding_id = self.padding_id,
+            diff_confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
+            diff_logits_eos_inf = self.diff_logits_eos_inf,
+        )
+        batch_size = prompt.shape[0]
+        stopping_criteria = set(self.stop_words)
+        for i in range(batch_size):
+            response = responses[i]
+            for stop_word in stopping_criteria:
+                if stop_word in response:
+                    response = response.split(stop_word)[0]
+                    break
+            responses[i] = response
+        return responses
     
     def get_token_len(self, prompt: str, add_special_tokens: bool=True) -> int:
         m = _convert_base_messages([prompt])[0]
         t = self.tokenizer(m, add_special_tokens=add_special_tokens)
         return len(t['input_ids'])
+    
