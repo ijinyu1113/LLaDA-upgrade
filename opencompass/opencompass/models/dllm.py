@@ -377,11 +377,11 @@ class LLaDAModel(BaseModel):
         print('mask_id:', self.mask_id, 'padding_id:', self.padding_id)
         print('diff_confidence_eos_eot_inf:', self.diff_confidence_eos_eot_inf, 'diff_logits_eos_inf:', self.diff_logits_eos_inf)
         print('final prompt:', prompt)
+        self.tokenizer.padding_side = "left" 
         prompt = self.tokenizer.batch_encode_plus(prompt, padding = True, return_tensors='pt')['input_ids']
-        responses = LLaDA_generate(
+        x = LLaDA_generate(
             model = self.model,
             prompt = prompt.to(self.model.device),
-            tokenizer = self.tokenizer,
             steps = self.gen_steps,
             gen_length = self.gen_length,
             block_length = self.gen_blocksize,
@@ -389,10 +389,19 @@ class LLaDAModel(BaseModel):
             cfg_scale = self.cfg,
             remasking = self.remasking,
             mask_id = self.mask_id,
-            padding_id = self.padding_id,
-            diff_confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
-            diff_logits_eos_inf = self.diff_logits_eos_inf,
+            confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
+            logits_eos_inf = self.diff_logits_eos_inf,
         )
+        responses = []
+        batch_size = prompt.shape[0]
+        
+        for i in range(batch_size):
+            responses.append(self.tokenizer.decode(x[i, -self.gen_length:], skip_special_tokens=True))
+        print('--------------------')
+        for i in range(batch_size):
+            print(f'Response {i}:', responses[i])
+            print('====================')
+        print('--------------------')
         return responses
     
     def get_ppl(self,
@@ -504,11 +513,11 @@ class LLaDABaseModel(LLaDAModel):
         print('mask_id:', self.mask_id, 'padding_id:', self.padding_id)
         print('diff_confidence_eos_eot_inf:', self.diff_confidence_eos_eot_inf, 'diff_logits_eos_inf:', self.diff_logits_eos_inf)
         print('final prompt:', prompt)
+        self.tokenizer.padding_side = "left" 
         prompt = self.tokenizer.batch_encode_plus(prompt, padding = True, return_tensors='pt')['input_ids']
-        responses = LLaDA_generate(
+        x = LLaDA_generate(
             model = self.model,
             prompt = prompt.to(self.model.device),
-            tokenizer = self.tokenizer,
             steps = self.gen_steps,
             gen_length = self.gen_length,
             block_length = self.gen_blocksize,
@@ -516,11 +525,19 @@ class LLaDABaseModel(LLaDAModel):
             cfg_scale = self.cfg,
             remasking = self.remasking,
             mask_id = self.mask_id,
-            padding_id = self.padding_id,
-            diff_confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
-            diff_logits_eos_inf = self.diff_logits_eos_inf,
+            confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
+            logits_eos_inf = self.diff_logits_eos_inf,
         )
+        responses = []
         batch_size = prompt.shape[0]
+        
+        for i in range(batch_size):
+            responses.append(self.tokenizer.decode(x[i, -self.gen_length:], skip_special_tokens=True))
+        print('--------------------')
+        for i in range(batch_size):
+            print(f'Response {i}:', responses[i])
+            print('====================')
+        print('--------------------')
         stopping_criteria = set(self.stop_words)
         for i in range(batch_size):
             response = responses[i]
