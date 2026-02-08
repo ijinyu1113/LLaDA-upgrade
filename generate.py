@@ -42,7 +42,8 @@ def get_num_transfer_tokens(mask_index, steps):
 
 @ torch.no_grad()
 def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, block_length=128, temperature=0.,
-             cfg_scale=0., remasking='low_confidence', mask_id=126336, logits_eos_inf=False, confidence_eos_eot_inf=False):
+             cfg_scale=0., remasking='low_confidence', mask_id=126336, logits_eos_inf=False,
+             confidence_eos_eot_inf=False, progress=None):
     '''
     Args:
         model: Mask predictor.
@@ -116,6 +117,8 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
                 _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
                 transfer_index[j, select_index] = True
             x[transfer_index] = x0[transfer_index]
+            if progress is not None:
+                progress(num_block=num_block, step=i + 1, steps=steps, num_blocks=num_blocks)
 
     return x
 

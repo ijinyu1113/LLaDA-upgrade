@@ -6,11 +6,17 @@ from transformers import AutoTokenizer, AutoModel
 
 def chat():
     device = 'cuda'
-    model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
+    use_bf16 = torch.cuda.is_bf16_supported()
+    dtype = torch.bfloat16 if use_bf16 else torch.float16
+    model = AutoModel.from_pretrained(
+        'GSAI-ML/LLaDA-8B-Instruct',
+        trust_remote_code=True,
+        torch_dtype=dtype,
+    ).to(device).eval()
     tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
 
-    gen_length = 128
-    steps = 128
+    gen_length = 32
+    steps = 32
     print('*' * 66)
     print(f'**  Answer Length: {gen_length}  |  Sampling Steps: {steps}  **')
     print('*' * 66)
@@ -29,7 +35,20 @@ def chat():
         else:
             prompt = torch.cat([prompt, input_ids[:, 1:]], dim=1)
 
-        out = generate(model, prompt, steps=steps, gen_length=gen_length, block_length=32, temperature=0., cfg_scale=0., remasking='low_confidence')
+        def _progress(num_block, step, steps, num_blocks):
+            print(f"[block {num_block + 1}/{num_blocks}] step {step}/{steps}")
+
+        out = generate(
+            model,
+            prompt,
+            steps=steps,
+            gen_length=gen_length,
+            block_length=32,
+            temperature=0.0,
+            cfg_scale=0.0,
+            remasking='low_confidence',
+            progress=_progress,
+        )
 
         answer = tokenizer.batch_decode(out[:, prompt.shape[1]:], skip_special_tokens=True)[0]
         print(f"Bot's reply: {answer}")

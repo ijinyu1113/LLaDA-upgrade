@@ -1,0 +1,38 @@
+PROMPT: Write a short story about a cat who finds a magical portal in a library.
+TEMPERATURE: 0.1
+==================================================
+
+--- MODE: Baseline ---
+Sample 1:
+Once upon a time, there was a cat named Whiskers who loved to explore the library. One day, while wandering through the shelves, he stumbled upon a magical portal that led to a different world. Whiskers stepped through the portal and discovered a magical realm filled with strange creatures and exciting adventures.
+
+Sample 2:
+Once upon a time, there was a cat named Whiskers who loved to explore the library. One day, while wandering through the shelves, he stumbled upon a magical portal. Curious, Whiskers stepped through the portal and found himself in a new world filled with magical creatures he had never seen before.
+
+Sample 3:
+One day, a curious cat named Whiskers stumbled upon a magical portal in the library. As he stepped through, he found himself in a magical world filled with talking books and magical creatures. Whiskers was amazed by the sights, but he knew he had to find a way back through the portal.
+
+Sample 4:
+Once upon a time, there was a cat named Whiskers who loved to explore the library. One day, while wandering through the shelves, he stumbled upon a magical portal that led to a different world. Whiskers stepped through the portal and discovered a magical realm filled with strange creatures and exciting adventures.
+
+Sample 5:
+Once upon a time, there was a cat named Whiskers who loved to explore the library. One day, while wandering through the shelves, he stumbled upon a magical portal that led to a different world. Whiskers stepped through the portal and discovered a magical realm filled with strange creatures and magical wonders.
+
+------------------------------
+--- MODE: Router ---
+Sample 1:
+Once upon a time, there was a cat named Whiskers who lived in a small town. One day, while exploring the local library, she stumbled upon a magical portal. Suddenly, she found herself in a magical world filled with strange creatures. Whiskers had never experienced anything like this ever before.
+
+Sample 2:
+One day, a curious cat named Whiskers stumbled upon a magical portal in the library. As he stepped through the portal, he was transported to a magical world filled with strange creatures and magical objects. Whiskers was amazed by the wonders of this new world and spent the day exploring its many secrets.
+
+Sample 3:
+Once upon a time, there was a cat named Whiskers who lived in a cozy little library. One day, while exploring the dusty shelves, she stumbled upon a magical portal. With a curious paw, she stepped through the portal and found herself in a magical world filled with strange creatures and exciting adventures.
+
+Sample 4:
+One day, a curious cat named Whiskers stumbled upon a magical portal in the library. As Whiskers stepped through the portal, he was transported to a magical world filled with strange creatures and magical artifacts. Whiskers had to navigate the magical world and find a way back home through the portal.
+
+Sample 5:
+One day, a curious cat named Whiskers stumbled upon a magical portal in the library. As he stepped through, he was transported to a magical world filled with strange creatures and exciting adventures. Whiskers soon became the hero of this world, using his feline agility to solve mysteries and protect the land.
+
+------------------------------
