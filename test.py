@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, AutoModelForCausalLM
 import numpy as np
 import os
 import matplotlib.pyplot as plt
@@ -10,57 +10,66 @@ class AMIPRouter(torch.nn.Module):
     def __init__(self, d_model=4096, K=8):
         super().__init__()
         self.routing_net = torch.nn.Linear(d_model, K)
-        self.mapping_nets = torch.nn.ModuleList([
+        # Experts now take [Anchor || Mask] input
+        self.experts = torch.nn.ModuleList([
             torch.nn.Sequential(
-                torch.nn.Linear(d_model, d_model // 4),
+                torch.nn.Linear(d_model * 2, d_model // 4),
                 torch.nn.GELU(),
                 torch.nn.Linear(d_model // 4, d_model)
             ) for _ in range(K)
         ])
         
-    def forward(self, h_L, mask_indices, unmasked_indices, range_r=8):
+    def forward(self, h_L, mask_indices, unmasked_indices, range_r=5):
         delta_h = torch.zeros_like(h_L) 
         bsz, seq_len, d_model = h_L.shape
         for b in range(bsz):
             m_idx, u_idx = mask_indices[b], unmasked_indices[b]
             for a in m_idx:
-                adjacent_items = [t for t in u_idx if 0 < abs(t - a) <= range_r]
-                if not adjacent_items: continue
-                h_a, h_ts = h_L[b, a:a+1, :], h_L[b, adjacent_items, :] 
-                weights = F.softmax(self.routing_net(h_a), dim=-1)
-                expert_outputs = sum(weights[:, i:i+1] * expert(h_ts).mean(dim=0, keepdim=True) 
-                                     for i, expert in enumerate(self.mapping_nets))
-                delta_h[b, a, :] = F.layer_norm(expert_outputs, (d_model,))
+                adj = [t for t in u_idx if 0 < abs(t - a) <= range_r]
+                if not adj: continue
+                # Conditioned Input: Expert sees Anchor AND the "Hole" (Mask)
+                h_mask = h_L[b, a:a+1, :]
+                h_anchors = h_L[b, adj, :]
+                
+                weights = F.softmax(self.routing_net(h_mask), dim=-1)
+                
+                # Combine Mask with the mean of its nearby Anchors
+                h_anchor_avg = h_anchors.mean(dim=0, keepdim=True)
+                conditioned_in = torch.cat([h_anchor_avg, h_mask], dim=-1) # [1, 8192]
+                
+                expert_out = sum(weights[:, i:i+1] * exp(conditioned_in) for i, exp in enumerate(self.experts))
+                delta_h[b, a, :] = F.layer_norm(expert_out, (d_model,))
         return delta_h
 
 class ALALLaDA(torch.nn.Module):
-    def __init__(self, base_model, d_model=4096, K=8, alpha=0.08):
+    def __init__(self, base_model, alpha=0.08):
         super().__init__()
         self.base_model = base_model
-        self.router = AMIPRouter(d_model=d_model, K=K)
+        self.router = AMIPRouter()
         self.alpha = alpha
-
     @property
     def device(self):
         return next(self.base_model.parameters()).device
-
     def forward(self, input_ids, attention_mask=None):
         outputs = self.base_model(input_ids, attention_mask=attention_mask, output_hidden_states=True)
-        h_L = outputs.hidden_states[-1].to(next(self.router.parameters()).dtype)
+        h_L = outputs.hidden_states[-1].to(torch.bfloat16)
+        
         m_idx = [torch.where(row == 126336)[0] for row in input_ids]
         u_idx = [torch.where(row != 126336)[0] for row in input_ids]
         
-        refinement_delta = self.router(h_L, m_idx, u_idx)
-        blended_h = h_L + (self.alpha * refinement_delta)
+        delta = self.router(h_L, m_idx, u_idx)
+        blended_h = ((1 - self.alpha) * h_L) + (self.alpha * delta)
         
-        # Recursive finder for LLaDA internal structure
-        final_norm, lm_head = None, None
-        for name, module in self.base_model.named_modules():
-            if any(x in name.lower() for x in ["norm", "ln_f"]): final_norm = module
-            if any(x in name.lower() for x in ["lm_head", "ff_out"]): lm_head = module
+        # Direct access instead of searching
+        normed = self.base_model.model.transformer.ln_f(blended_h)
+        logits = self.base_model.model.transformer.ff_out(normed)
         
-        logits = lm_head(final_norm(blended_h)) if final_norm else torch.matmul(blended_h, self.base_model.get_input_embeddings().weight.T)
         return type('Obj', (object,), {'logits': logits})
+    def base_logits(self, input_ids):
+        out = self.base_model(input_ids, output_hidden_states=True)
+        h = out.hidden_states[-1].to(torch.bfloat16)
+        normed = self.base_model.model.transformer.ln_f(h)
+        return self.base_model.model.transformer.ff_out(normed)
 
 # --- 2. MATH UTILS ---
 def calculate_entropy(probs):
@@ -85,7 +94,48 @@ def get_num_transfer_tokens(mask_index, steps):
     res = torch.zeros(mask_num.size(0), steps, device=mask_index.device, dtype=torch.int64) + base
     for i in range(mask_num.size(0)): res[i, :remainder[i]] += 1
     return res
+# --- 2. NEW ACCURACY METRIC: LOG-PROB CONFIDENCE ---
+@torch.no_grad()
+def evaluate_soft_accuracy(model, tokenizer, prompt, expected_token):
+    device = model.device
+    ids = tokenizer(prompt, return_tensors="pt")["input_ids"].to(device)
+    target_id = tokenizer.encode(expected_token, add_special_tokens=False)[-1]
+    
+    seq = torch.cat([ids, torch.tensor([[126336]], device=device)], dim=1)
+    
+    # Baseline: use the helper that goes through ln_f -> ff_out
+    b_logits = model.base_logits(seq)[0, -1, :]
+    
+    # Router
+    r_logits = model(seq).logits[0, -1, :]
+    
+    b_prob = F.softmax(b_logits.float(), dim=-1)[target_id].item()
+    r_prob = F.softmax(r_logits.float(), dim=-1)[target_id].item()
+    
+    return {"baseline_p": b_prob, "router_p": r_prob, "gain": r_prob - b_prob}
 
+def plot_tradeoff_curve(results):
+    temps = [r["Temp"] for r in results]
+    base_jaccards = [r["BaseJaccard"] for r in results]
+    router_jaccards = [r["RouterJaccard"] for r in results]
+    router_accs = [r["RouterAcc"] for r in results]
+    
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    
+    ax1.set_xlabel('Temperature')
+    ax1.set_ylabel('Diversity (1 - Jaccard)', color='tab:blue')
+    ax1.plot(temps, [1-j for j in base_jaccards], color='tab:cyan', marker='o', label='Baseline Diversity')
+    ax1.plot(temps, [1-j for j in router_jaccards], color='tab:blue', marker='o', label='Router Diversity')
+    ax1.legend(loc='upper left')
+    
+    ax2 = ax1.twinx()
+    ax2.set_ylabel('Masked Prediction Accuracy', color='tab:red')
+    ax2.plot(temps, router_accs, color='tab:red', marker='s', linestyle='--', label='Router Accuracy')
+    ax2.legend(loc='upper right')
+    
+    plt.title("Diversity vs. Accuracy Tradeoff (Alpha=0.1)")
+    plt.savefig("accuracy_diversity_tradeoff.png")
+    print("\n[Success] Tradeoff curve saved to accuracy_diversity_tradeoff.png")
 # --- 3. GENERATION & ANALYSIS ---
 # --- Updated Generation Logic based on official LLaDA implementation ---
 @torch.no_grad()
@@ -108,7 +158,7 @@ def generate_stable(model, prompt_ids, steps=128, gen_length=128, block_length=3
 
         for i in range(steps_per_block):
             mask_index = (x == mask_id)
-            logits = model(x).logits if use_router else model.base_model(x).logits
+            logits = model(x).logits if use_router else model.base_logits(x)
             
             # Official Heuristic: Prevent premature stopping
             logits[:, :, 126081] = -torch.inf 
@@ -151,7 +201,8 @@ def run_scientific_eval(model, tokenizer, prompt):
         if not len(mask_locs): break
         
         # Get simultaneous distributions
-        b_logits = model.base_model(seq).logits[0, mask_locs[0]]
+        b_logits = model.base_logits(seq)[0, mask_locs[0]]
+
         r_logits = model(seq).logits[0, mask_locs[0]]
         
         # 1. Calculate JSD (The real divergence)
@@ -180,7 +231,7 @@ def test_distribution_flatness(model, tokenizer):
     for mode in ["Baseline", "Router"]:
         use_router = (mode == "Router")
         seq = torch.cat([ids, torch.full((1, 1), 126336, device=model.device)], dim=1)
-        out = model(seq).logits if use_router else model.base_model(seq).logits
+        out = model(seq).logits if use_router else model.base_logits(seq)
         
         probs = F.softmax(out[0, -1, :], dim=-1)
         number_probs = probs[target_tokens]
@@ -257,25 +308,92 @@ def test_sample_diversity(model, tokenizer, num_samples=3, shared_temp=0.1):
         print(f"[{mode}] Avg Jaccard Similarity: {avg_jaccard:.4f}")
 
     return all_outputs
+from datasets import load_dataset
+@torch.no_grad()
+def calculate_masked_accuracy(model, tokenizer, dataset_name="wikitext", split="test", num_samples=20, p_mask=0.15):
+    print(f"\n[Accuracy Eval] Calculating Masked Prediction Accuracy...")
+    dataset = load_dataset(dataset_name, "wikitext-2-raw-v1", split=split)
+    texts = [t for t in dataset["text"][:200] if len(t) > 50][:num_samples]
+    
+    correct_base, correct_router, total = 0, 0, 0
+    
+    for text in texts:
+        enc = tokenizer(text, return_tensors="pt", truncation=True, max_length=128)
+        ids = enc["input_ids"].to(model.device)
+        original = ids.clone()
+        
+        # Mask 15% of tokens
+        mask_prob = torch.full(ids.shape, p_mask, device=ids.device)
+        mask_indices = torch.bernoulli(mask_prob).bool()
+        mask_indices[:, 0] = False  # Don't mask BOS
+        
+        masked_ids = ids.clone()
+        masked_ids[mask_indices] = 126336
+        
+        if not mask_indices.any():
+            continue
+        
+        # Base prediction
+        b_logits = model.base_logits(masked_ids)
+        b_preds = b_logits.argmax(dim=-1)
+        
+        # Router prediction
+        r_logits = model(masked_ids).logits
+        r_preds = r_logits.argmax(dim=-1)
+        
+        targets = original[mask_indices]
+        correct_base += (b_preds[mask_indices] == targets).sum().item()
+        correct_router += (r_preds[mask_indices] == targets).sum().item()
+        total += targets.numel()
+    
+    print(f"  Baseline Mask Acc: {correct_base/total:.4f}")
+    print(f"  Router Mask Acc:   {correct_router/total:.4f}")
+    return correct_base/total, correct_router/total
 
 if __name__ == "__main__":
+    from transformers import BitsAndBytesConfig
+    quant_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_quant_type="nf4"
+    )
+
     model_id = 'GSAI-ML/LLaDA-8B-Instruct'
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-    base_model = AutoModel.from_pretrained(model_id, trust_remote_code=True, torch_dtype=torch.bfloat16).to('cuda')
-    model = ALALLaDA(base_model).to('cuda').to(torch.bfloat16)
+    
+    base_model  = AutoModelForCausalLM.from_pretrained(
+        model_id, 
+        trust_remote_code=True, 
+        torch_dtype=torch.bfloat16,
 
-    # 2. LOAD YOUR TRAINED WEIGHTS (Fixes the "Random" issue)
-    # Replace "trained_router.pt" with the actual path to your saved file
-    weights_path = "amip_router_final.pt" 
+        #quantization_config=quant_config,
+        device_map="auto"
+    )
+
+    for name, child in base_model.named_children():
+        print(f"{name:30s} -> {type(child).__name__}")
+    print("\n--- Second level under 'model' ---")
+    for name, child in base_model.model.named_children():
+        print(f"model.{name:30s} -> {type(child).__name__}")
+    print("\n--- Second level under 'model.transformer' ---")
+    for name, child in base_model.model.transformer.named_children():
+        print(f"model.transformer.{name:30s} -> {type(child).__name__}")
+
+    # Initialize with alpha=0.3 to match training
+    model = ALALLaDA(base_model, alpha=0.1).to(torch.bfloat16)
+    device = next(base_model.parameters()).device
+    model.router.to(device)
+
+    weights_path = "amip_router_conditioned.pt" 
     if os.path.exists(weights_path):
-        model.router.load_state_dict(torch.load(weights_path))
-        print(f"Successfully loaded trained AMIP Router from {weights_path}")
+        model.router.load_state_dict(torch.load(weights_path, map_location=device))
+        print(f"Success: Conditioned Router loaded at {device}")
     else:
-        print("WARNING: No trained weights found. Running with a RANDOM router.")
+        print("WARNING: Using RANDOM initialization.")
 
     model.eval()
 
-    # Hard Logic Cases
+    # --- EVALUATION SUITE ---
     test_cases = [
         ("Triple Swap", "Alice has an apple, Bob has a banana, and Charlie has a cherry. Alice swaps with Bob. Then Bob swaps with Charlie. Now, Alice has the", "banana"),
         ("Distractor", "A gold coin is in the red box. A silver coin is in the blue bag. I replace the gold coin with a copper coin. The red box now has the", "copper"),
@@ -283,64 +401,87 @@ if __name__ == "__main__":
         ("State Swap", "I have a box and a bag. The ball is in the box. The key is in the bag. I swap them. The bag now has the", "ball")
     ]
 
-    # Parameter Sweep Configurations
-    # Format: (Alpha, Temp)
-    sweep_configs = [
-        (0.05, 0.1),  # Conservative: High stability, lower reasoning
-        (0.08, 0.3),  # Balanced: The "Sweet Spot"
-        (0.12, 0.5)   # Aggressive: High reasoning gap, higher risk of noise
-    ]
+    # Sweep temps: 0.0 gives a clean baseline vs router comparison
+    sweep_configs = [0.0, 0.15, 0.3]
+    tradeoff_results = []
 
-    for alpha_val, temp_val in sweep_configs:
-        model.alpha = alpha_val
+    for temp_val in sweep_configs:
         print(f"\n" + "="*100)
-        print(f"RUNNING SWEEP: Alpha={alpha_val} | Temp={temp_val}")
+        print(f"RUNNING SWEEP: Alpha=0.1 (fixed) | Temp={temp_val}")
         print("="*100)
-        print(f"{'CATEGORY':<15} | {'EXPECTED':<10} | {'BASELINE':<30} | {'AMIP ROUTER':<30}")
+        
+        # A. Masked Prediction Accuracy (temperature-independent)
+        # Only run once since masking accuracy doesn't depend on generation temp
+        if temp_val == sweep_configs[0]:
+            base_acc, router_acc = calculate_masked_accuracy(model, tokenizer, num_samples=20)
+            cached_base_acc, cached_router_acc = base_acc, router_acc
+        else:
+            base_acc, router_acc = cached_base_acc, cached_router_acc
+            print(f"  [Cached] Baseline Mask Acc: {base_acc:.4f} | Router Mask Acc: {router_acc:.4f}")
+        
+        # B. Soft Accuracy (also temperature-independent — single mask token, greedy)
+        if temp_val == sweep_configs[0]:
+            soft_accs_data = []
+            for cat, prompt, expected in test_cases:
+                acc_data = evaluate_soft_accuracy(model, tokenizer, prompt, expected)
+                soft_accs_data.append(acc_data)
+                print(f"  [{cat}] Base P={acc_data['baseline_p']:.4f} | Router P={acc_data['router_p']:.4f} | Gain={acc_data['gain']:+.4f}")
+            avg_soft_acc = np.mean([d["router_p"] for d in soft_accs_data])
+            cached_soft_acc = avg_soft_acc
+        else:
+            avg_soft_acc = cached_soft_acc
+        
+        # C. Logical Success — both baseline and router use SAME temp
+        print(f"\n{'CATEGORY':<15} | {'EXPECTED':<10} | {'BASELINE':<30} | {'AMIP ROUTER':<30}")
         print("-" * 100)
-
-        sweep_results = {"baseline": 0, "router": 0}
-
         for category, prompt, expected in test_cases:
-            ids = tokenizer(prompt, return_tensors="pt")["input_ids"].to('cuda')
-            
-            # Baseline uses fixed temp=0.1 for maximum stability
-            b_out = generate_stable(model, ids, use_router=False, temp=0.0)
+            ids = tokenizer(prompt, return_tensors="pt")["input_ids"].to(device)
+            b_out = generate_stable(model, ids, use_router=False, temp=temp_val)
             b_ans = tokenizer.decode(b_out[0, ids.shape[1]:], skip_special_tokens=True).strip().lower()
             
-            # Router uses the sweep temperature
             r_out = generate_stable(model, ids, use_router=True, temp=temp_val)
             r_ans = tokenizer.decode(r_out[0, ids.shape[1]:], skip_special_tokens=True).strip().lower()
-
-            if expected in b_ans: sweep_results["baseline"] += 1
-            if expected in r_ans: sweep_results["router"] += 1
-
             print(f"{category:<15} | {expected:<10} | {b_ans[:30]:<30} | {r_ans[:30]:<30}")
 
-        print("-" * 100)
-        print(f"CFG SUMMARY | Baseline: {sweep_results['baseline']}/{len(test_cases)} | AMIP Router: {sweep_results['router']}/{len(test_cases)}")
+        # D. Diversity Measure — both modes use same temp
+        diversity_samples = test_sample_diversity(model, tokenizer, num_samples=5, shared_temp=temp_val)
         
-        # 2. RUN MECHANISTIC ANALYSIS ON THE HARDEST CASE for each config
-        print(f"[Analysis] Capturing Latent Expansion for Alpha {alpha_val}...")
-        stats = run_scientific_eval(model, tokenizer, test_cases[0][1])
+        # Compute Jaccard for both modes
+        jaccard_results = {}
+        for mode in ["Baseline", "Router"]:
+            words = [s.lower().split() for s in diversity_samples[mode]]
+            sims = []
+            for i in range(len(words)):
+                for j in range(i+1, len(words)):
+                    s1, s2 = set(words[i]), set(words[j])
+                    if s1 and s2: sims.append(len(s1 & s2) / len(s1 | s2))
+            jaccard_results[mode] = np.mean(sims) if sims else 1.0
         
-        plt.figure(figsize=(10, 6))
-        plt.plot(stats["steps"], stats["gap"], label=f'Alpha={alpha_val}')
-        plt.fill_between(stats["steps"], 0, stats["gap"], alpha=0.1)
-        plt.title(f"Reasoning Gap Scaling (Alpha={alpha_val})")
-        plt.ylabel("Entropy Nudge")
-        plt.savefig(f"analysis_alpha_{alpha_val}.png")
-        plt.close() # Close to prevent overlapping plots
-    flatness_data = test_distribution_flatness(model, tokenizer)
-    story_samples = test_sample_diversity(model, tokenizer, num_samples=5)
+        print(f"  Baseline Jaccard: {jaccard_results['Baseline']:.4f} | Router Jaccard: {jaccard_results['Router']:.4f}")
+
+        # E. Efficiency Index
+        efficiency = (1 - jaccard_results["Router"]) * router_acc if router_acc > 0 else 0.0
+        
+        tradeoff_results.append({
+            "Temp": temp_val, 
+            "BaseAcc": base_acc, 
+            "RouterAcc": router_acc,
+            "BaseJaccard": jaccard_results["Baseline"],
+            "RouterJaccard": jaccard_results["Router"],
+            "SoftAcc": avg_soft_acc, 
+            "Efficiency": efficiency
+        })
+
+    # --- FINAL SCIENTIFIC SUMMARY ---
+    print("\n" + "="*130)
+    print("RESEARCH SUMMARY: DIVERSITY vs. ACCURACY TRADEOFF (Alpha=0.3 fixed)")
+    print("="*130)
+    print(f"{'Temp':<8} | {'Base MaskAcc':<14} | {'Router MaskAcc':<16} | {'SoftAcc':<10} | {'Base Jaccard':<14} | {'Router Jaccard':<16} | {'Eff. Index':<10}")
+    print("-" * 130)
+    for r in tradeoff_results:
+        print(f"{r['Temp']:<8} | {r['BaseAcc']:<14.4f} | {r['RouterAcc']:<16.4f} | {r['SoftAcc']:<10.4f} | {r['BaseJaccard']:<14.4f} | {r['RouterJaccard']:<16.4f} | {r['Efficiency']:<10.4f}")
     
-    # Plotting the flatness
-    plt.figure(figsize=(8, 4))
-    plt.bar(range(1, 11), flatness_data["Baseline"][0], alpha=0.5, label='Baseline')
-    plt.bar(range(1, 11), flatness_data["Router"][0], alpha=0.5, label='AMIP Router')
-    plt.title("Flatness Test: Probability of choosing numbers 1-10")
-    plt.legend()
-    plt.savefig("flatness_test.png")
-    print("\n" + "="*100)
-    print("SWEEP COMPLETE: All plots saved to directory.")
-    print("="*100)
+    plot_tradeoff_curve(tradeoff_results)
+    test_distribution_flatness(model, tokenizer)
+    
+    print("\n[Sweep Complete] Evaluation results and Pareto plots saved.")

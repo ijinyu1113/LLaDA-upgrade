@@ -1,56 +1,59 @@
 import torch
 import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import os
-
 # --- 1. ARCHITECTURE: AMIP ROUTER & MAPPING NETWORKS ---
 # Implements the routing-mapping mechanism (Eq. 11, 12, 13) [cite: 360-372]
 class AMIPRouter(torch.nn.Module):
     def __init__(self, d_model=4096, K=8):
         super().__init__()
-        # Routing network g(x): Eq. 12 [cite: 365]
+        # Router still looks at the mask to select experts
         self.routing_net = torch.nn.Linear(d_model, K)
         
-        # Mapping networks f_i(x): Eq. 11 [cite: 361]
-        self.mapping_nets = torch.nn.ModuleList([
+        # Experts now take [Anchor || Mask] -> Input Dim = d_model * 2
+        self.experts = torch.nn.ModuleList([
             torch.nn.Sequential(
-                torch.nn.Linear(d_model, d_model // 4),
+                torch.nn.Linear(d_model * 2, d_model // 4),
                 torch.nn.GELU(),
                 torch.nn.Linear(d_model // 4, d_model)
             ) for _ in range(K)
         ])
         
-    def forward(self, item_repr, target_mask_repr):
-        """
-        item_repr: h_t^L (Contextualized item representation) [cite: 354]
-        target_mask_repr: h_a^L (Contextualized mask representation) [cite: 358]
-        """
-        # Calculate routing weights: g(h_a^L) [cite: 370]
-        weights = F.softmax(self.routing_net(target_mask_repr), dim=-1) # [B, K]
+    def forward(self, h_anchor, h_mask):
+        # 1. Selection logic based on the mask's "void"
+        weights = F.softmax(self.routing_net(h_mask), dim=-1) # [B, K]
         
-        # Refine representation via Experts: Eq. 13 [cite: 370]
-        refined = 0
-        for i, expert in enumerate(self.mapping_nets):
-            refined += weights[:, i:i+1] * expert(item_repr)
+        # 2. Conditioned Input: Expert sees both Source and Target
+        conditioned_input = torch.cat([h_anchor, h_mask], dim=-1) # [B, 8192]
+        
+        # 3. Weighted Expert Output
+        refined_delta = 0
+        for i, expert in enumerate(self.experts):
+            refined_delta += weights[:, i:i+1] * expert(conditioned_input)
             
-        return F.layer_norm(refined, (refined.shape[-1],)) 
+        return refined_delta # Returns the "Delta" to be interpolated
 
 # --- 2. HELPER FUNCTIONS: MASKING & ADJACENCY ---
-def apply_random_mask(input_ids, p_mask, mask_token_id=126336):
+def apply_random_mask(input_ids,attention_mask, p_mask, mask_token_id=126336):
     """Applies dynamic masking from 0% to 100% across the sequence. [cite: 314-315]"""
     labels = input_ids.clone()
-    probability_matrix = torch.full(labels.shape, p_mask)
+    
+    # Create a mask only for "real" tokens (where attention_mask == 1)
+    probability_matrix = torch.full(labels.shape, p_mask).to(input_ids.device)
+    probability_matrix = probability_matrix * attention_mask # Zero out padding
+    
     masked_indices = torch.bernoulli(probability_matrix).bool()
     
-    # Only mask tokens, don't calculate loss on unmasked tokens
     input_ids[masked_indices] = mask_token_id
-    labels[~masked_indices] = -100 # Standard cross-entropy ignore index
+    
+    # IMPORTANT: Only calculate loss on real tokens that were masked
+    labels[~masked_indices] = -100 
     return input_ids, labels
 
-def find_adjacent_pairs(input_ids, mask_token_id=126336, range_r=2):
+def find_adjacent_pairs(input_ids, mask_token_id=126336, range_r=5):
     """
     Finds 2nd-order adjacent pairs: 0 < |t - a| <= 2. [cite: 355, 384]
     t: Unmasked item index (m_t = 0)
@@ -90,67 +93,62 @@ def train():
     model_id = "GSAI-ML/LLaDA-8B-Instruct"
     mask_token_id = 126336
     
+    # Quantization to fit 8B on consumer GPU
+    quant_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16)
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-    base_llada = AutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True, torch_dtype=torch.bfloat16).to(device)
-    base_llada.eval()
+    base_llada = AutoModelForCausalLM.from_pretrained(
+        model_id, trust_remote_code=True, quantization_config=quant_config, device_map="auto"
+    )
     
     router = AMIPRouter(d_model=4096, K=8).to(device).to(torch.bfloat16)
-    optimizer = torch.optim.AdamW(router.parameters(), lr=1e-4)
+    optimizer = torch.optim.AdamW(router.parameters(), lr=2e-4) # Slightly lower LR for stability
     
-    # FIX: Pre-filter dataset to avoid empty batches and IndexError
     dataset = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="train")
-    dataset = dataset.filter(lambda x: len(x["text"]) > 40) # Ensure sufficient context
+    dataset = dataset.filter(lambda x: len(x["text"]) > 50)
     
     def collate_fn(batch):
-        texts = [x["text"] for x in batch]
-        return tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=128)
+        return tokenizer([x["text"] for x in batch], return_tensors="pt", padding=True, truncation=True, max_length=128)
+    loader = DataLoader(dataset, batch_size=2, shuffle=True, collate_fn=collate_fn)
 
-    loader = DataLoader(dataset, batch_size=4, shuffle=True, collate_fn=collate_fn)
-
-    print("Starting AMIP-Diffusion Router Training...")
-    
-
+    print("Training Conditioned Residual Router...")
     for step, batch in enumerate(tqdm(loader)):
-        if step > 500: break # Training pilot length
-        
+        #if step > 1000: break
+        attention_mask = batch["attention_mask"].to(device)
         input_ids = batch["input_ids"].to(device)
+        p_mask = torch.rand(1).item() # Diffusion-style dynamic masking
+        masked_ids, labels = apply_random_mask(input_ids, attention_mask, p_mask, mask_token_id)
         
-        # 1. Dynamic Masking (0% to 100%) [cite: 314-315]
-        p_mask = torch.rand(1).item()
-        masked_ids, labels = apply_random_mask(input_ids, p_mask, mask_token_id)
-        
-        # 2. Get Representations H^L [cite: 353]
         with torch.no_grad():
-            outputs = base_llada(masked_ids, output_hidden_states=True)
-            h_L = outputs.hidden_states[-1] 
+            h_L = base_llada(masked_ids, output_hidden_states=True).hidden_states[-1]
 
-        # 3. Identify Adjacent Pairs (t -> a) 
-        u_idx, m_idx = find_adjacent_pairs(masked_ids, mask_token_id, range_r=2)
+        u_idx, m_idx = find_adjacent_pairs(masked_ids, mask_token_id, range_r=5)
         if not u_idx: continue
         
-        # Gather representations for the batch
-        b_u, t_idx = zip(*u_idx)
-        b_m, a_idx = zip(*m_idx)
-        h_t = h_L[torch.tensor(b_u), torch.tensor(t_idx)] # Unmasked item repr
-        h_a = h_L[torch.tensor(b_m), torch.tensor(a_idx)] # Masked target repr
-        target_labels = labels[torch.tensor(b_m), torch.tensor(a_idx)]
+        h_t = h_L[torch.tensor([x[0] for x in u_idx]), torch.tensor([x[1] for x in u_idx])]
+        h_a = h_L[torch.tensor([x[0] for x in m_idx]), torch.tensor([x[1] for x in m_idx])]
+        target_labels = labels[torch.tensor([x[0] for x in m_idx]), torch.tensor([x[1] for x in m_idx])]
+        h_t = h_t.to(torch.bfloat16)
+        h_a = h_a.to(torch.bfloat16)
+        # 1. Get the Delta from the Conditioned Experts
+        delta = router(h_t, h_a)
         
-        # 4. Refine via Router-Mapping mechanism [cite: 369-370]
-        refined_h = router(h_t, h_a)
+        # 2. CONVEX INTERPOLATION (The Training Logic)
+        # alpha=1.0 during training to force experts to learn the residual
+        alpha = 0.1
+        h_blended = ((1 - alpha) * h_a) + (alpha * delta)
         
-        # 5. Dual Objective Loss (Eq. 17) [cite: 394]
-        l_amip = calculate_amip_loss(refined_h, target_labels, base_llada.get_input_embeddings())
-        l_reg = calculate_reg_loss(h_a, target_labels, base_llada.get_input_embeddings())
-        
-        total_loss = l_amip + (0.3 * l_reg) # lambda_reg = 0.3 [cite: 394, 901]
-        
-        # 6. Optimize
-        total_loss.backward()
+        h_blended = h_blended.float()  # Cast to float32 to match ln_f
+        normed = base_llada.model.transformer.ln_f(h_blended)
+        logits = base_llada.model.transformer.ff_out(normed.to(base_llada.model.transformer.ff_out.weight.dtype))
+        loss = F.cross_entropy(logits, target_labels)
+
+        if step % 100 == 0:
+            print(f"Step {step} | Loss: {loss.item():.4f}")
+        loss.backward()
         optimizer.step()
         optimizer.zero_grad()
 
-    torch.save(router.state_dict(), "amip_router_final.pt")
-    print("Training Complete. Weights saved to amip_router_final.pt.")
+    torch.save(router.state_dict(), "amip_router_conditioned.pt")
 
 if __name__ == "__main__":
     train()
