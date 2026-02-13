@@ -4,35 +4,35 @@ TEMPERATURE: 0.3
 
 --- MODE: Baseline ---
 Sample 1:
-One day, a cat named Whiskers found a magical portal in the library. Through the portal, it was transported to a world of magic and wonder. There, it made new friends and learned new things. In the end, it returned to the library and shared its knowledge and experience with the world.
+One day, a cat named Whiskers found a magical portal in the library. He walked through the portal and found himself in a world of books and magic. There, he met a group of books and a talking cat, and together, they went on a journey to find the secrets of the library.
 
 Sample 2:
-One day, a cat named Whiskers found a magical portal in the library. He stepped through the portal and found himself in a world of books and magic. There, he met a group of creatures, and together, they went on a journey to explore the secrets of the library and the magical world.
+One day, a cat named Whiskers found a magical portal in a library. Through the portal, it was transported to a world of magical books and creatures. There, it met a group of friends, and together, they went on a journey to explore the world and discover the secrets of the books.
 
 Sample 3:
-One day, a cat named Whiskers found a magical portal in the library. Through the portal, it was transported to a world of magic and wonder. There, it made new friends and learned new things. In the end, it returned to the library and decided to keep the magical experience a secret.
+One day, a cat named Whiskers found a magical portal in a library. It stepped through the portal and found itself in a world of books and magic. There, it met a group of friends, and together, they went on a journey to explore the secrets of the library and the magical world.
 
 Sample 4:
-One day, a cat named Whiskers found a magical portal in the library. Through the portal, it was transported to a world of magic and wonder. There, it made new friends and learned new things. In the end, it returned to the library and decided to keep the magical place a secret.
+One day, a cat named Whiskers found a magical portal in a library. Through the portal, it was transported to a world of books and stories. There, it met a group of friends, and together, they went on a journey to explore the secrets of the library and the world beyond it.
 
 Sample 5:
-One day, a cat named Whiskers found a magical portal in the library. It went through the portal and found itself in a new world. The world was full of magic, and the cat had to navigate through it. In the end, the cat found its way and came back to the library.
+One day, a cat named Whiskers found a magical portal in a library. It stepped through the portal and found itself in a world of books and stories. There, it met a group of characters and went on a journey to find the secrets of the library and the power of the books in it.
 
 ------------------------------
 --- MODE: Router ---
 Sample 1:
-One day, a curious cat named Wiskers wandered into a library and found a strange, old book. As he flipped through the book, a magical, shimmering portal appeared in front of him. Curious, Wiskers entered the portal and found himself in a magical world full of wonder and adventure.
+One day, a curious cat named Wiskers found a magical portal in the library. He stepped through the portal and found himself in a world of wonder and magic. There, he made new friends and learned new things. In the end, he returned to the library and shared his knowledge with the world.
 
 Sample 2:
-One day, a cat named Whiskers found a magical portal in the library. He stepped through the portal and found himself in a world of books and magic. There, he met a group of friends, and together, they went on a journey to explore the secrets of the library and the magical world.
+One day, a curious cat named Wiskers wandered into a library and found a large, old book. As he flipped through the book, he found a small, glowing portal in the back. Excitedly, Wiskers stepped through the portal and was transported to a world of wonder and magic.
 
 Sample 3:
-One day, a curious cat named Wiskers found a mysterious book in the library. As he opened the book, a flash of light appeared, and a portal opened up in the floor. Wiskers hopped through the portal and found himself in a magical world, full of strange creatures and exciting adventures.
+One day, a curious cat named Wiskers wandered into a library and found a large, old book. As it flipped through the book, it discovered a small, glowing portal. Excitedly, Wiskers stepped through the portal and found itself in a magical world, full of wonder and adventure.
 
 Sample 4:
-One day, a curious cat named Wiskers wandered into a library and found a strange, old book. As he flipped through the book, a magical, shimmering portal appeared in front of him. Curious, Wiskers entered the portal and found himself in a new world full of magic and wonder.
+One day, a cat named Whiskers found a magical portal in the library. Through the portal, it was transported to a world of magical books and creatures. There, it met a group of friends, and together, they went on adventures to explore the secrets of the library and the world beyond it.
 
 Sample 5:
-One day, a curious cat named Wiskers wandered into a library and found a strange, old book. As he flipped through the book, a magical, shimmering portal appeared in the pages. Without hesitation, Wiskers hopped through the portal and found himself in a world full of wonder and magic.
+One day, a cat named Whiskers was exploring the library when it stumbled upon a strange, glowing light. Curious, Whiskers followed the light and found a small, hidden door. As it opened the door, a magical portal appeared, and Whiskers was transported to a whole new world.
 
 ------------------------------
