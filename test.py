@@ -38,11 +38,11 @@ class AMIPRouter(torch.nn.Module):
                 conditioned_in = torch.cat([h_anchor_avg, h_mask], dim=-1) # [1, 8192]
                 
                 expert_out = sum(weights[:, i:i+1] * exp(conditioned_in) for i, exp in enumerate(self.experts))
-                delta_h[b, a, :] = F.layer_norm(expert_out, (d_model,))
+                delta_h[b, a, :] = expert_out.squeeze(0)
         return delta_h
 
 class ALALLaDA(torch.nn.Module):
-    def __init__(self, base_model, alpha=0.08):
+    def __init__(self, base_model, alpha=0.1):
         super().__init__()
         self.base_model = base_model
         self.router = AMIPRouter()
