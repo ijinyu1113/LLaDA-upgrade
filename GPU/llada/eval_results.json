@@ -1,0 +1,93 @@
+{
+  "mask_accuracy": {
+    "base_acc": 0.7151702786377709,
+    "router_acc": 0.7739938080495357
+  },
+  "logical_reasoning": [
+    {
+      "temp": 0.0,
+      "base_correct": 3,
+      "router_correct": 4,
+      "total": 4,
+      "base_acc": 0.75,
+      "router_acc": 1.0
+    },
+    {
+      "temp": 0.15,
+      "base_correct": 3,
+      "router_correct": 4,
+      "total": 4,
+      "base_acc": 0.75,
+      "router_acc": 1.0
+    },
+    {
+      "temp": 0.3,
+      "base_correct": 3,
+      "router_correct": 4,
+      "total": 4,
+      "base_acc": 0.75,
+      "router_acc": 1.0
+    }
+  ],
+  "diversity": [
+    {
+      "temp": 0.0,
+      "Baseline": {
+        "unique_ratio": 0.148,
+        "jaccard": 1.0
+      },
+      "Router": {
+        "unique_ratio": 0.12131147540983607,
+        "jaccard": 1.0
+      }
+    },
+    {
+      "temp": 0.15,
+      "Baseline": {
+        "unique_ratio": 0.30158730158730157,
+        "jaccard": 0.4565472655247794
+      },
+      "Router": {
+        "unique_ratio": 0.1782178217821782,
+        "jaccard": 0.7112424242424242
+      }
+    },
+    {
+      "temp": 0.3,
+      "Baseline": {
+        "unique_ratio": 0.3607843137254902,
+        "jaccard": 0.2978872909052225
+      },
+      "Router": {
+        "unique_ratio": 0.264026402640264,
+        "jaccard": 0.4891072855448143
+      }
+    }
+  ],
+  "entropy": {
+    "mean_base": 3.4980955347418785,
+    "mean_router": 3.6751350834965706
+  },
+  "flatness": {
+    "Baseline": {
+      "entropy": 0.002004028530791402,
+      "normalized_entropy": 0.0008703385324993867
+    },
+    "Router": {
+      "entropy": 0.0023741591721773148,
+      "normalized_entropy": 0.0010310842276366001
+    }
+  },
+  "gsm8k": {
+    "Baseline": {
+      "accuracy": 0.5,
+      "correct": 25,
+      "total": 50
+    },
+    "Router": {
+      "accuracy": 0.5,
+      "correct": 25,
+      "total": 50
+    }
+  }
+}

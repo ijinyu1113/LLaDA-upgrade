@@ -8,7 +8,6 @@ import json
 import re
 import matplotlib.pyplot as plt
 from generation_utils import generate, get_num_transfer_tokens, add_gumbel_noise
-import math
 # ============================================================
 # 1. ARCHITECTURE
 # ============================================================
@@ -72,20 +71,20 @@ class ALALLaDA(torch.nn.Module):
 
     def forward(self, input_ids, attention_mask=None):
         outputs = self.base_model(input_ids, attention_mask=attention_mask, output_hidden_states=True)
-        # Last hidden state is POST ln_f, so don't apply ln_f again
         h_L = outputs.hidden_states[-1].to(torch.bfloat16)
         m_idx = [torch.where(row == 126336)[0] for row in input_ids]
         u_idx = [torch.where(row != 126336)[0] for row in input_ids]
         delta = self.router(h_L, m_idx, u_idx)
         blended_h = ((1 - self.alpha) * h_L) + (self.alpha * delta)
-        # Skip ln_f — already applied. Go straight to ff_out.
-        logits = self.base_model.model.transformer.ff_out(blended_h)
-        if self.base_model.model.config.scale_logits:
-            logits = logits * (1 / math.sqrt(self.base_model.model.config.d_model))
+        normed = self.base_model.model.transformer.ln_f(blended_h)
+        logits = self.base_model.model.transformer.ff_out(normed)
         return type('Obj', (object,), {'logits': logits})
 
     def base_logits(self, input_ids):
-        return self.base_model(input_ids).logits
+        out = self.base_model(input_ids, output_hidden_states=True)
+        h = out.hidden_states[-1].to(torch.bfloat16)
+        normed = self.base_model.model.transformer.ln_f(h)
+        return self.base_model.model.transformer.ff_out(normed)
 
 # ============================================================
 # 3. EVAL: MASK PREDICTION ACCURACY (single-step)
@@ -170,11 +169,11 @@ def eval_logical_reasoning(model, tokenizer, temps=[0.0, 0.15, 0.3], gen_length=
 
         for category, prompt, expected in LOGIC_TEST_CASES:
             ids = tokenizer(prompt, return_tensors="pt")["input_ids"].to(model.device)
-            torch.manual_seed(42)
+
             # Baseline
             b_out = generate(model, ids, steps=steps, gen_length=gen_length, use_router=False, temp=temp)
             b_ans = tokenizer.decode(b_out[0, ids.shape[1]:], skip_special_tokens=True).strip().lower()
-            torch.manual_seed(42)
+
             # Router
             r_out = generate(model, ids, steps=steps, gen_length=gen_length, use_router=True, temp=temp)
             r_ans = tokenizer.decode(r_out[0, ids.shape[1]:], skip_special_tokens=True).strip().lower()
@@ -205,7 +204,12 @@ def eval_logical_reasoning(model, tokenizer, temps=[0.0, 0.15, 0.3], gen_length=
 # ============================================================
 # 5. EVAL: DIVERSITY (Jaccard + Unique Token Ratio, across temps)
 # ============================================================
+@torch.no_grad()
 def eval_diversity(model, tokenizer, num_samples=5, temps=[0.0, 0.15, 0.3]):
+    """
+    Generates multiple samples from same prompt at each temperature.
+    Lower Jaccard = more diverse. Higher unique token ratio = richer vocabulary.
+    """
     print(f"\n{'='*60}")
     print(f"EVAL 3: Generation Diversity (temps={temps}, samples={num_samples})")
     print(f"{'='*60}")
@@ -214,52 +218,44 @@ def eval_diversity(model, tokenizer, num_samples=5, temps=[0.0, 0.15, 0.3]):
 
     all_results = []
 
-    with open("generated_stories.txt", "w") as f:
-        f.write("=" * 60 + "\n")
-        f.write("Generated Short Stories\n")
-        f.write("=" * 60 + "\n\n")
+    for temp in temps:
+        print(f"\n  --- Temperature: {temp} ---")
+        ids = tokenizer(prompt, return_tensors="pt")["input_ids"].to(model.device)
+        temp_results = {"temp": temp}
 
-        for temp in temps:
-            print(f"\n  --- Temperature: {temp} ---")
-            f.write(f"--- Temperature: {temp} ---\n\n")
-            ids = tokenizer(prompt, return_tensors="pt")["input_ids"].to(model.device)
-            temp_results = {"temp": temp}
+        for mode in ["Baseline", "Router"]:
+            use_router = (mode == "Router")
+            texts = []
 
-            for mode in ["Baseline", "Router"]:
-                use_router = (mode == "Router")
-                texts = []
+            for s in range(num_samples):
+                out = generate(model, ids, steps=64, gen_length=64, use_router=use_router, temp=temp)
+                text = tokenizer.decode(out[0, ids.shape[1]:], skip_special_tokens=True).strip()
+                texts.append(text)
+                print(f"    [{mode} #{s+1}]: {text[:80]}...")
 
-                for s in range(num_samples):
-                    torch.manual_seed(42 + s)
-                    out = generate(model, ids, steps=64, gen_length=64, use_router=use_router, temp=temp)
-                    text = tokenizer.decode(out[0, ids.shape[1]:], skip_special_tokens=True).strip()
-                    texts.append(text)
-                    print(f"    [{mode} #{s+1}]: {text[:80]}...")
-                    f.write(f"[{mode} #{s+1}]\n{text}\n\n")
+            # Unique token ratio
+            words_list = [t.lower().split() for t in texts]
+            flat = [w for wl in words_list for w in wl]
+            unique_ratio = len(set(flat)) / len(flat) if flat else 0
 
-                words_list = [t.lower().split() for t in texts]
-                flat = [w for wl in words_list for w in wl]
-                unique_ratio = len(set(flat)) / len(flat) if flat else 0
+            # Pairwise Jaccard
+            sims = []
+            for i in range(len(words_list)):
+                for j in range(i + 1, len(words_list)):
+                    s1, s2 = set(words_list[i]), set(words_list[j])
+                    if s1 and s2:
+                        sims.append(len(s1 & s2) / len(s1 | s2))
+            avg_jaccard = np.mean(sims) if sims else 1.0
 
-                sims = []
-                for i in range(len(words_list)):
-                    for j in range(i + 1, len(words_list)):
-                        s1, s2 = set(words_list[i]), set(words_list[j])
-                        if s1 and s2:
-                            sims.append(len(s1 & s2) / len(s1 | s2))
-                avg_jaccard = np.mean(sims) if sims else 1.0
+            temp_results[mode] = {
+                "unique_ratio": unique_ratio,
+                "jaccard": avg_jaccard,
+                "texts": texts
+            }
+            print(f"    [{mode}] Unique: {unique_ratio:.4f} | Jaccard: {avg_jaccard:.4f}")
 
-                temp_results[mode] = {
-                    "unique_ratio": unique_ratio,
-                    "jaccard": avg_jaccard,
-                    "texts": texts
-                }
-                print(f"    [{mode}] Unique: {unique_ratio:.4f} | Jaccard: {avg_jaccard:.4f}")
-                f.write(f"[{mode}] Unique: {unique_ratio:.4f} | Jaccard: {avg_jaccard:.4f}\n\n")
+        all_results.append(temp_results)
 
-            all_results.append(temp_results)
-
-    print("\n  Stories saved to generated_stories.txt")
     return all_results
 
 
@@ -408,9 +404,9 @@ def eval_gsm8k(model, tokenizer, num_samples=50, steps=256, gen_length=256, temp
     def extract_answer(text):
         if "####" in text:
             after = text.split("####")[-1].strip()
-            match = re.match(r'-?\d+\.?\d*', after)
-            if match:
-                return match.group()
+            num = ''.join(c for c in after if c.isdigit() or c == '-')
+            if num:
+                return num
         numbers = re.findall(r'-?\d+\.?\d*', text)
         return numbers[-1] if numbers else ""
 
@@ -433,7 +429,6 @@ def eval_gsm8k(model, tokenizer, num_samples=50, steps=256, gen_length=256, temp
 
         for mode in ["Baseline", "Router"]:
             use_router = (mode == "Router")
-            torch.manual_seed(42)
             out = generate(model, ids, steps=steps, gen_length=gen_length, use_router=use_router, temp=temp)
             response = tokenizer.decode(out[0, ids.shape[1]:], skip_special_tokens=True).strip()
             pred = extract_answer(response)
@@ -578,30 +573,7 @@ if __name__ == "__main__":
     model = ALALLaDA(base_model, alpha=0.1).to(torch.bfloat16)
     device = next(base_model.parameters()).device
     model.router.to(device)
-    print("Base model type:", type(model.base_model))
-    
-    dummy_ids = tokenizer("Hello", return_tensors="pt")["input_ids"].to(model.device)
-    
-    base_out = model.base_model(dummy_ids)
-    print("Base output type:", type(base_out))
-    print("Has .logits:", hasattr(base_out, 'logits'))
-    
-    router_out = model(dummy_ids)
-    print("Router output type:", type(router_out))
-    print("Has .logits:", hasattr(router_out, 'logits'))
-    
-    if hasattr(base_out, 'logits'):
-        print("Base logits shape:", base_out.logits.shape)
-        print("Router logits shape:", router_out.logits.shape)
-        
-        # Check if manual base_logits matches direct .logits
-        manual = model.base_logits(dummy_ids)
-        direct = base_out.logits
-        print("Manual vs direct max diff:", (manual - direct).abs().max().item())
-    import inspect
-    print(inspect.getsource(type(model.base_model.model).forward))
 
-    print("=" * 60)
     weights_path = "amip_router_best.pt"
     if os.path.exists(weights_path):
         model.router.load_state_dict(torch.load(weights_path, map_location=device))
