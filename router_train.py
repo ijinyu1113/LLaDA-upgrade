@@ -136,8 +136,8 @@ def train():
     def collate_fn(batch):
         return tokenizer([x["text"] for x in batch], return_tensors="pt", padding=True, truncation=True, max_length=128)
     
-    train_loader = DataLoader(train_data, batch_size=2, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_data, batch_size=2, shuffle=False, collate_fn=collate_fn)
+    train_loader = DataLoader(train_data, batch_size=16, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_data, batch_size=16, shuffle=False, collate_fn=collate_fn)
 
     best_val_loss = float('inf')
     print("Training Conditioned Residual Router with Validation...")
